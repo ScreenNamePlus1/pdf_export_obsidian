@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore // Added import
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
