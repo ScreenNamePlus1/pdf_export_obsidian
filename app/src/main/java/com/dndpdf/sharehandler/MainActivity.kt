@@ -1,25 +1,41 @@
 // MainActivity.kt
 package com.dndpdf.sharehandler
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
-import java.io.File
-import java.io.FileOutputStream
 import android.print.PrintAttributes
 import android.print.PrintDocumentAdapter
 import android.print.PrintManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.content.Context
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
 import android.os.Environment
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    
+    // New SAF Launcher
+    private val openDocumentTreeLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            if (uri != null) {
+                // You can save this URI persistently using SharedPreferences if you want
+                // to avoid asking the user every time.
+                readObsidianFileFromUri(uri.toString())
+            } else {
+                Toast.makeText(this, "Obsidian vault not selected.", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,12 +65,12 @@ class MainActivity : AppCompatActivity() {
             }
             intent?.action == Intent.ACTION_VIEW -> {
                 val data = intent.data
-                if (data != null) {
-                    // Handle obsidian:// URLs or file paths
-                    val content = extractContentFromUri(data.toString())
-                    if (content != null) {
-                        processMarkdownContent(content)
-                    }
+                if (data != null && data.scheme == "obsidian") {
+                    // Launch the SAF folder picker for the user to select their vault
+                    openDocumentTreeLauncher.launch(null)
+                } else {
+                    Toast.makeText(this, "No valid content to process", Toast.LENGTH_SHORT).show()
+                    finish()
                 }
             }
             else -> {
@@ -64,51 +80,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun extractContentFromUri(uri: String): String? {
-        // Handle obsidian:// URLs and extract file content
-        return when {
-            uri.startsWith("obsidian://") -> {
-                // Parse obsidian URL and extract file path
-                val regex = "file=([^&]+)".toRegex()
-                val matchResult = regex.find(uri)
-                val fileName = matchResult?.groupValues?.get(1)?.replace("%20", " ")
+    // New function to read from the selected URI
+    private fun readObsidianFileFromUri(treeUri: String) {
+        // Parse the original obsidian URL from the intent to get the file name
+        val sharedUri = intent.dataString
+        val regex = "file=([^&]+)".toRegex()
+        val matchResult = regex.find(sharedUri ?: "")
+        val fileName = matchResult?.groupValues?.get(1)?.replace("%20", " ")
 
-                if (fileName != null) {
-                    // Try to read the actual markdown file
-                    readObsidianFile(fileName)
-                } else null
+        if (fileName != null) {
+            val content = getFileContentFromDocumentTree(treeUri, fileName)
+            if (content != null) {
+                processMarkdownContent(content)
+            } else {
+                Toast.makeText(this, "File not found or unreadable.", Toast.LENGTH_LONG).show()
+                finish()
             }
-            else -> null
+        } else {
+            Toast.makeText(this, "Invalid Obsidian URL.", Toast.LENGTH_SHORT).show()
+            finish()
         }
     }
 
-    private fun readObsidianFile(fileName: String): String? {
+    // New function to get file content via SAF
+    private fun getFileContentFromDocumentTree(treeUri: String, fileName: String): String? {
         return try {
-            // Common Obsidian vault locations on Android
-            val possiblePaths = listOf(
-                "${Environment.getExternalStorageDirectory()}/Documents/Obsidian",
-                "${Environment.getExternalStorageDirectory()}/Obsidian",
-                "${getExternalFilesDir(null)}/Obsidian",
-                "/Android/data/md.obsidian/files"
-            )
+            val rootDocument = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
+            val fileDocument = rootDocument?.findFile("$fileName.md") ?: rootDocument?.findFile(fileName)
 
-            var content: String? = null
-
-            for (basePath in possiblePaths) {
-                val file = File("$basePath/$fileName.md")
-                if (file.exists()) {
-                    content = file.readText()
-                    break
-                }
-                // Also try without .md extension
-                val fileNoExt = File("$basePath/$fileName")
-                if (fileNoExt.exists()) {
-                    content = fileNoExt.readText()
-                    break
-                }
+            if (fileDocument?.exists() == true && fileDocument.isFile) {
+                val inputStream = contentResolver.openInputStream(fileDocument.uri)
+                inputStream?.bufferedReader().use { it?.readText() }
+            } else {
+                null
             }
-
-            content
         } catch (e: Exception) {
             null
         }
@@ -320,7 +325,7 @@ class MainActivity : AppCompatActivity() {
         }
         
         blockquote::before {
-            content: """;
+            content: "";
             font-family: "Cinzel Decorative", serif;
             font-size: 4em;
             color: rgba(88, 24, 13, 0.2);
@@ -412,10 +417,10 @@ class MainActivity : AppCompatActivity() {
 </html>
         """
     }
-    
+
     private fun generatePdf(htmlContent: String) {
         webView.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
-        
+
         webView.setWebViewClient(object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
@@ -423,67 +428,22 @@ class MainActivity : AppCompatActivity() {
             }
         })
     }
-    
+
     private fun createPdfFromWebView() {
         val printManager = getSystemService(Context.PRINT_SERVICE) as PrintManager
         val printAdapter: PrintDocumentAdapter = webView.createPrintDocumentAdapter("DnD_Adventure")
-        
+
         val printAttributes = PrintAttributes.Builder()
             .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
             .setResolution(PrintAttributes.Resolution("pdf", "pdf", 600, 600))
             .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
             .build()
-        
+
         val fileName = "DnD_Adventure_${System.currentTimeMillis()}"
-        
+
         printManager.print(fileName, printAdapter, printAttributes)
-        
+
         Toast.makeText(this, "PDF generation started!", Toast.LENGTH_LONG).show()
         finish()
     }
 }
-
-// AndroidManifest.xml content needed:
-/*
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-
-    <application
-        android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
-        android:label="D&D PDF Generator"
-        android:theme="@style/Theme.AppCompat.Light">
-        
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar">
-            
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            
-            <!-- Handle shared text from Obsidian -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            
-            <!-- Handle obsidian:// URLs -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="obsidian" />
-            </intent-filter>
-            
-        </activity>
-    </application>
-</manifest>
-*/
