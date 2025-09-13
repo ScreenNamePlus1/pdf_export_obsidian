@@ -3,72 +3,69 @@ import java.util.Properties
 import java.io.FileInputStream
 
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 
 // Start of the signing configuration block
-val signingPropertiesFile = project.rootProject.file("signing.properties")
-val signingProperties = Properties()
+def signingPropertiesFile = project.rootProject.file('signing.properties')
+def signingProperties = new Properties()
 if (signingPropertiesFile.exists()) {
-    signingProperties.load(FileInputStream(signingPropertiesFile))
+    signingProperties.load(new FileInputStream(signingPropertiesFile))
 }
 // End of the signing configuration block
 
 android {
-    namespace = "com.dndpdf.sharehandler"
+    namespace = 'com.dndpdf.sharehandler'
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.dndpdf.sharehandler"
-        minSdk = 24
-        targetSdk = 34
-        versionCode = 29
-        versionName = "29"
+        applicationId 'com.dndpdf.sharehandler'
+        minSdk 24
+        targetSdk 34
+        versionCode 29
+        versionName '29'
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             // Assign the signing configuration to the release build
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig signingConfigs.release
         }
     }
 
     // Start of the signing config block
     signingConfigs {
-        create("release") {
-            storeFile = file("my-release-key.jks")
-            storePassword = signingProperties.getProperty("storePassword")
-            keyAlias = "my-key-alias"
-            keyPassword = signingProperties.getProperty("keyPassword")
+        release {
+            storeFile file('my-release-key.jks')
+            storePassword signingProperties.getProperty('storePassword')
+            keyAlias 'my-key-alias'
+            keyPassword signingProperties.getProperty('keyPassword')
         }
     }
     // End of the signing config block
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = '1.8'
     }
 }
 
 dependencies {
     // ... all your dependencies here ...
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.10.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.10.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
 }
