@@ -6,47 +6,26 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.provider.MediaStore // Added import
-import android.widget.ScrollView
-import android.widget.TextView
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import androidx.core.app.ActivityCompat
-import android.Manifest
-import android.content.pm.PackageManager
+import com.itextpdf.html2pdf.HtmlConverter
+import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var debugText: TextView
     private val debugLog = StringBuilder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Create a simple text view to show debug info
-        debugText = TextView(this).apply {
-            textSize = 12f
-            setPadding(20, 20, 20, 20)
-        }
-
-        val scrollView = ScrollView(this).apply {
-            addView(debugText)
-        }
-        setContentView(scrollView)
-
+        // No UI, process intent and finish
         log("=== D&D PDF HANDLER DEBUG ===")
         log("App started at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
-
-        Toast.makeText(this, "Debug version started!", Toast.LENGTH_LONG).show()
-
-        // Check permissions for older APIs
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 100)
-        }
+        log("Build version: ${Build.VERSION.SDK_INT} (API ${Build.VERSION.CODENAME})")
+        log("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
 
         // Analyze the intent
         analyzeIntent()
@@ -57,16 +36,15 @@ class MainActivity : AppCompatActivity() {
         // Handle the intent
         handleIntent()
 
-        // Auto-close after 30 seconds so you can read the debug info
-        debugText.postDelayed({
-            finish()
-        }, 30000)
+        // Save debug log
+        saveFile("debug_log.txt", debugLog.toString())
+
+        // Finish immediately
+        finish()
     }
 
     private fun log(message: String) {
         debugLog.appendLine(message)
-        debugText.text = debugLog.toString()
-        debugText.invalidate() // Force UI refresh
         android.util.Log.d("DnDDebug", message)
     }
 
@@ -76,7 +54,12 @@ class MainActivity : AppCompatActivity() {
         log("Type: ${intent?.type ?: "null"}")
         log("Data: ${intent?.data ?: "null"}")
         log("DataString: ${intent?.dataString ?: "null"}")
-        log("Categories: ${intent?.categories ?: "null"}")
+        log("Categories: ${intent?.categories?.joinToString() ?: "null"}")
+        log("Scheme: ${intent?.data?.scheme ?: "null"}")
+        log("Host: ${intent?.data?.host ?: "null"}")
+        log("Path: ${intent?.data?.path ?: "null"}")
+        log("Query: ${intent?.data?.query ?: "null"}")
+        log("Fragment: ${intent?.data?.fragment ?: "null"}")
 
         log("\nExtras:")
         intent?.extras?.let { bundle ->
@@ -84,20 +67,12 @@ class MainActivity : AppCompatActivity() {
                 log("  $key: ${bundle.get(key)}")
             }
         } ?: log("  No extras")
-
-        // Special check for text content
-        val sharedText = intent?.getStringExtra(Intent.EXTRA_TEXT)
-        if (sharedText != null) {
-            log("\nShared text preview:")
-            log("Length: ${sharedText.length}")
-            log("First 200 chars: ${sharedText.take(200)}")
-        }
     }
 
     private fun showFileLocations() {
         log("\n=== FILE LOCATIONS ===")
 
-        // Internal storage (always available)
+        // Internal storage
         log("Internal files dir: ${filesDir.absolutePath}")
         log("Internal exists: ${filesDir.exists()}")
         log("Internal writable: ${filesDir.canWrite()}")
@@ -125,6 +100,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleIntent() {
         log("\n=== HANDLING INTENT ===")
+        log("Intent received: ${intent?.toString() ?: "null"}")
 
         when (intent?.action) {
             Intent.ACTION_SEND -> {
@@ -141,7 +117,7 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {
                 log("Unexpected action: ${intent?.action ?: "null"}")
-                createTestFiles()
+                saveFile("fallback_debug.txt", "Unexpected intent action: ${intent?.action ?: "null"}\nDebug log:\n$debugLog")
             }
         }
     }
@@ -151,25 +127,57 @@ class MainActivity : AppCompatActivity() {
 
         if (sharedText != null) {
             log("Got shared text, length: ${sharedText.length}")
+            log("Shared text preview: ${sharedText.take(200)}")
 
-            // Process as markdown and save both HTML and test file
+            // Convert to HTML and PDF
             val html = convertMarkdownToHtml(sharedText)
             saveFile("shared_content.html", html)
             saveFile("shared_content.txt", sharedText)
+            saveFileAsPdf("shared_content.pdf", html)
 
-            Toast.makeText(this, "Processed shared text", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Processed shared text to HTML and PDF", Toast.LENGTH_LONG).show()
         } else {
             log("No text content in ACTION_SEND")
+            saveFile("failed_action_send.txt", "No text content received in ACTION_SEND\nDebug log:\n$debugLog")
         }
     }
 
     private fun handleObsidianUrl() {
+        log("Entering handleObsidianUrl")
         val data = intent?.data
 
         if (data != null) {
             log("Obsidian URL received: $data")
+            log("Scheme: ${data.scheme}")
+            log("Host: ${data.host}")
+            log("Path: ${data.path}")
+            log("Query: ${data.query}")
+            log("Fragment: ${data.fragment}")
 
-            // Save URL info
+            // Extract filename or note name
+            val fileName = extractFileName(data.toString()) ?: "unknown_note"
+
+            // Placeholder content (since we can't access Obsidian note directly)
+            val noteContent = """
+# Obsidian Note: $fileName
+
+This is a placeholder for the Obsidian note content.
+URL: $data
+Extracted filename: $fileName
+
+*Note*: Direct access to Obsidian note content is not supported.
+Please share the note text via ACTION_SEND if needed.
+
+*Processed at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}*
+            """.trimIndent()
+
+            // Convert to HTML and PDF
+            val html = convertMarkdownToHtml(noteContent)
+            saveFile("obsidian_${fileName}.html", html)
+            saveFile("obsidian_${fileName}.txt", noteContent)
+            saveFileAsPdf("obsidian_${fileName}.pdf", html)
+
+            // Save URL debug info
             val urlInfo = """
 Obsidian URL Debug Info
 ======================
@@ -179,21 +187,23 @@ Host: ${data.host}
 Path: ${data.path}
 Query: ${data.query}
 Fragment: ${data.fragment}
-Extracted filename attempt: ${extractFileName(data.toString())}
+Extracted filename: $fileName
+Debug log:
+$debugLog
             """.trimIndent()
-
             saveFile("obsidian_url_info.txt", urlInfo)
 
-            Toast.makeText(this, "Received Obsidian URL - check files", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Processed Obsidian URL to HTML and PDF", Toast.LENGTH_LONG).show()
         } else {
             log("No URL data in ACTION_VIEW")
+            saveFile("failed_obsidian_url.txt", "No URL data received in ACTION_VIEW\nDebug log:\n$debugLog")
+            Toast.makeText(this, "No Obsidian URL data received", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun createTestFiles() {
         log("Creating test files...")
 
-        // Test markdown content
         val testMarkdown = """
 # Test D&D Adventure
 
@@ -222,14 +232,14 @@ The party enters *The Prancing Pony*, a cozy tavern with:
 *File created at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}*
         """.trimIndent()
 
-        // Save as both markdown and HTML
         val html = convertMarkdownToHtml(testMarkdown)
-
         saveFile("test_adventure.md", testMarkdown)
         saveFile("test_adventure.html", html)
+        saveFileAsPdf("test_adventure.pdf", html)
         saveFile("debug_log.txt", debugLog.toString())
 
         log("Test files created!")
+        Toast.makeText(this, "Test files created - check Downloads", Toast.LENGTH_LONG).show()
     }
 
     private fun convertMarkdownToHtml(markdown: String): String {
@@ -246,7 +256,6 @@ The party enters *The Prancing Pony*, a cozy tavern with:
         html = html.replace("\n\n", "</p><p>")
         html = html.replace("\n", "<br>")
 
-        // Wrap in basic HTML structure
         return """
 <!DOCTYPE html>
 <html>
@@ -272,7 +281,71 @@ The party enters *The Prancing Pony*, a cozy tavern with:
         """.trimIndent()
     }
 
+    private fun saveFile(fileName: String, content: String): Boolean {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val fullFileName = "DnD_${fileName.substringBeforeLast(".")}_${timestamp}.${fileName.substringAfterLast(".")}"
+
+        try {
+            log("Attempting to save file: $fullFileName")
+            val resolver = contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fullFileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, getMimeType(fullFileName))
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    outputStream.write(content.toByteArray())
+                    outputStream.flush()
+                }
+                log("✓ Saved via MediaStore to Downloads: $fullFileName (URI: $uri)")
+                return true
+            } else {
+                log("✗ MediaStore URI is null for file: $fullFileName")
+                return false
+            }
+        } catch (e: Exception) {
+            log("✗ Failed to save file: $fullFileName, Error: ${e.message}")
+            Toast.makeText(this, "Failed to save: $fullFileName (${e.message})", Toast.LENGTH_LONG).show()
+            return false
+        }
+    }
+
+    private fun saveFileAsPdf(fileName: String, htmlContent: String): Boolean {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val fullFileName = "DnD_${fileName.substringBeforeLast(".")}_${timestamp}.pdf"
+
+        try {
+            log("Attempting to save PDF: $fullFileName")
+            val resolver = contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fullFileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    HtmlConverter.convertToPdf(htmlContent, outputStream)
+                }
+                log("✓ Saved PDF via MediaStore to Downloads: $fullFileName (URI: $uri)")
+                return true
+            } else {
+                log("✗ MediaStore URI is null for PDF: $fullFileName")
+                return false
+            }
+        } catch (e: Exception) {
+            log("✗ Failed to save PDF: $fullFileName, Error: ${e.message}")
+            Toast.makeText(this, "Failed to save PDF: $fullFileName (${e.message})", Toast.LENGTH_LONG).show()
+            return false
+        }
+    }
+
     private fun extractFileName(obsidianUri: String): String? {
+        log("Extracting filename from URI: $obsidianUri")
         val patterns = listOf(
             "file=([^&]+)",
             "vault=([^&]+).*?file=([^&]+)",
@@ -288,42 +361,12 @@ The party enters *The Prancing Pony*, a cozy tavern with:
                 } else {
                     matchResult.groupValues[1]
                 }
+                log("Extracted filename: $fileName")
                 return fileName.replace("%20", " ").replace("%2F", "/")
             }
         }
+        log("No filename extracted from URI")
         return null
-    }
-
-    private fun saveFile(fileName: String, content: String): Boolean {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val fullFileName = "DnD_${fileName.substringBeforeLast(".")}_${timestamp}.${fileName.substringAfterLast(".")}"
-
-        try {
-            val resolver = contentResolver
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fullFileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, getMimeType(fullFileName))
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            }
-
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { outputStream ->
-                    outputStream.write(content.toByteArray())
-                    outputStream.flush()
-                }
-                log("✓ Saved via MediaStore to Downloads: $fullFileName")
-                Toast.makeText(this, "File saved: $fullFileName", Toast.LENGTH_LONG).show()
-                return true
-            } else {
-                log("✗ MediaStore URI is null")
-                return false
-            }
-        } catch (e: Exception) {
-            log("✗ Failed to save file: $fullFileName, Error: ${e.message}")
-            Toast.makeText(this, "Failed to save: $fullFileName", Toast.LENGTH_LONG).show()
-            return false
-        }
     }
 
     private fun getMimeType(fileName: String): String {
