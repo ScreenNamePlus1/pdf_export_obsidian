@@ -10,8 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-
-    - name: Clean Gradle Cache
+   - name: Clean Gradle Cache
   run: |
     rm -rf ~/.gradle/caches/
 
