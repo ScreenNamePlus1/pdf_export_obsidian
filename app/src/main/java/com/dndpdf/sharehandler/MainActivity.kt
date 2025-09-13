@@ -1,169 +1,269 @@
-// MainActivity.kt
+// Visual Debug MainActivity.kt - Shows everything on screen
 package com.dndpdf.sharehandler
 
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.util.Log
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.os.Environment
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
-import java.io.PrintWriter
-import java.io.StringWriter
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
-// iText PDF imports
-import com.itextpdf.html2pdf.HtmlConverter
-import java.io.ByteArrayOutputStream
-
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        private const val TAG = "DnDPDFHandler"
-    }
-
-    private lateinit var webView: WebView
-    private var sourceDocumentFile: DocumentFile? = null
-    private var rootDocument: DocumentFile? = null
-    
-    // SAF Launcher with proper URI persistence
-    private val openDocumentTreeLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-            if (uri != null) {
-                Log.d(TAG, "SAF URI received: $uri")
-                // Take persistable permission
-                try {
-                    contentResolver.takePersistableUriPermission(uri, 
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                    Log.d(TAG, "Persistable permission taken successfully")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to take persistable permission", e)
-                }
-                
-                readObsidianFileFromUri(uri.toString())
-            } else {
-                Log.w(TAG, "No URI received from SAF picker")
-                Toast.makeText(this, "Obsidian vault not selected.", Toast.LENGTH_SHORT).show()
-                finish()
-            }
-        }
+    private lateinit var debugText: TextView
+    private val debugLog = StringBuilder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate called")
-
-        // Set up WebView for HTML rendering
-        webView = WebView(this)
-        setContentView(webView)
-        webView.webViewClient = WebViewClient()
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
-
-        // Handle shared content
-        handleIncomingContent()
+        
+        // Create a simple text view to show debug info
+        debugText = TextView(this).apply {
+            textSize = 12f
+            setPadding(20, 20, 20, 20)
+        }
+        
+        val scrollView = ScrollView(this).apply {
+            addView(debugText)
+        }
+        setContentView(scrollView)
+        
+        log("=== D&D PDF HANDLER DEBUG ===")
+        log("App started at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
+        
+        Toast.makeText(this, "Debug version started!", Toast.LENGTH_LONG).show()
+        
+        // Analyze the intent
+        analyzeIntent()
+        
+        // Show file locations
+        showFileLocations()
+        
+        // Handle the intent
+        handleIntent()
+        
+        // Auto-close after 30 seconds so you can read the debug info
+        debugText.postDelayed({
+            finish()
+        }, 30000)
     }
 
-    private fun handleIncomingContent() {
-        Log.d(TAG, "handleIncomingContent called")
-        Log.d(TAG, "Intent action: ${intent?.action}")
-        Log.d(TAG, "Intent type: ${intent?.type}")
-        Log.d(TAG, "Intent data: ${intent?.data}")
-        Log.d(TAG, "Intent dataString: ${intent?.dataString}")
+    private fun log(message: String) {
+        debugLog.appendLine(message)
+        debugText.text = debugLog.toString()
+        android.util.Log.d("DnDDebug", message)
+    }
+
+    private fun analyzeIntent() {
+        log("\n=== INTENT ANALYSIS ===")
+        log("Action: ${intent?.action ?: "null"}")
+        log("Type: ${intent?.type ?: "null"}")
+        log("Data: ${intent?.data ?: "null"}")
+        log("DataString: ${intent?.dataString ?: "null"}")
+        log("Categories: ${intent?.categories ?: "null"}")
         
-        // Show debug info to user
-        Toast.makeText(this, "Intent action: ${intent?.action}, type: ${intent?.type}", Toast.LENGTH_LONG).show()
-        
-        when {
-            intent?.action == Intent.ACTION_SEND -> {
-                Log.d(TAG, "Handling ACTION_SEND")
-                if (intent.type == "text/plain") {
-                    val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-                    Log.d(TAG, "Shared text length: ${sharedText?.length}")
-                    if (sharedText != null) {
-                        Toast.makeText(this, "Received text content (${sharedText.length} chars)", Toast.LENGTH_SHORT).show()
-                        processMarkdownContent(sharedText, null)
-                    } else {
-                        Log.w(TAG, "No text content in ACTION_SEND")
-                        Toast.makeText(this, "No content received", Toast.LENGTH_SHORT).show()
-                        finish()
-                    }
-                } else {
-                    Log.w(TAG, "Unsupported content type: ${intent.type}")
-                    Toast.makeText(this, "Unsupported content type: ${intent.type}", Toast.LENGTH_SHORT).show()
-                    finish()
-                }
+        log("\nExtras:")
+        intent?.extras?.let { bundle ->
+            for (key in bundle.keySet()) {
+                log("  $key: ${bundle.get(key)}")
             }
-            intent?.action == Intent.ACTION_VIEW -> {
-                Log.d(TAG, "Handling ACTION_VIEW")
-                val data = intent.data
-                if (data != null && data.scheme == "obsidian") {
-                    Log.d(TAG, "Valid Obsidian URL received: $data")
-                    Toast.makeText(this, "Received Obsidian URL: $data", Toast.LENGTH_LONG).show()
-                    // Launch the SAF folder picker
-                    openDocumentTreeLauncher.launch(null)
-                } else {
-                    Log.w(TAG, "Invalid or no URI data: $data")
-                    Toast.makeText(this, "No valid content to process", Toast.LENGTH_SHORT).show()
-                    finish()
-                }
+        } ?: log("  No extras")
+        
+        // Special check for text content
+        val sharedText = intent?.getStringExtra(Intent.EXTRA_TEXT)
+        if (sharedText != null) {
+            log("\nShared text preview:")
+            log("Length: ${sharedText.length}")
+            log("First 200 chars: ${sharedText.take(200)}")
+        }
+    }
+
+    private fun showFileLocations() {
+        log("\n=== FILE LOCATIONS ===")
+        
+        // Internal storage (always available)
+        log("Internal files dir: ${filesDir.absolutePath}")
+        log("Internal exists: ${filesDir.exists()}")
+        log("Internal writable: ${filesDir.canWrite()}")
+        
+        // External storage
+        val externalFiles = getExternalFilesDir(null)
+        if (externalFiles != null) {
+            log("External files dir: ${externalFiles.absolutePath}")
+            log("External exists: ${externalFiles.exists()}")
+            log("External writable: ${externalFiles.canWrite()}")
+        } else {
+            log("External storage not available")
+        }
+        
+        // Downloads folder
+        val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (downloadsDir != null) {
+            log("Downloads dir: ${downloadsDir.absolutePath}")
+            log("Downloads exists: ${downloadsDir.exists()}")
+            log("Downloads writable: ${downloadsDir.canWrite()}")
+        } else {
+            log("Downloads directory not available")
+        }
+    }
+
+    private fun handleIntent() {
+        log("\n=== HANDLING INTENT ===")
+        
+        when (intent?.action) {
+            Intent.ACTION_SEND -> {
+                log("Processing ACTION_SEND")
+                handleTextShare()
+            }
+            Intent.ACTION_VIEW -> {
+                log("Processing ACTION_VIEW")
+                handleObsidianUrl()
+            }
+            Intent.ACTION_MAIN -> {
+                log("App launched directly (not shared)")
+                createTestFiles()
             }
             else -> {
-                Log.w(TAG, "Unhandled intent action: ${intent?.action}")
-                Toast.makeText(this, "No valid content to process", Toast.LENGTH_SHORT).show()
-                finish()
+                log("Unknown or null action")
+                createTestFiles() // Create test files anyway
             }
         }
     }
 
-    private fun readObsidianFileFromUri(treeUri: String) {
-        Log.d(TAG, "readObsidianFileFromUri called with: $treeUri")
+    private fun handleTextShare() {
+        val sharedText = intent?.getStringExtra(Intent.EXTRA_TEXT)
         
-        val sharedUri = intent?.dataString
-        Log.d(TAG, "SharedURI from intent: $sharedUri")
-        
-        if (sharedUri == null) {
-            Log.e(TAG, "No URI data found in intent")
-            Toast.makeText(this, "No URI data found", Toast.LENGTH_SHORT).show()
-            finish()
-            return
-        }
-        
-        // More robust filename extraction
-        val fileName = extractFileName(sharedUri)
-        Log.d(TAG, "Extracted filename: $fileName")
-
-        if (fileName.isNullOrEmpty()) {
-            Log.e(TAG, "Could not extract filename from URL: $sharedUri")
-            Toast.makeText(this, "Could not extract filename from URL", Toast.LENGTH_LONG).show()
-            finish()
-            return
-        }
-        
-        val (content, fileDocument) = getFileContentAndDocument(treeUri, fileName)
-        if (content != null && fileDocument != null) {
-            Log.d(TAG, "File found successfully, content length: ${content.length}")
-            Toast.makeText(this, "File found, processing content...", Toast.LENGTH_LONG).show()
-            sourceDocumentFile = fileDocument
-            rootDocument = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
-            processMarkdownContent(content, fileDocument)
+        if (sharedText != null) {
+            log("Got shared text, length: ${sharedText.length}")
+            
+            // Process as markdown and save both HTML and test file
+            val html = convertMarkdownToHtml(sharedText)
+            saveFile("shared_content.html", html)
+            saveFile("shared_content.txt", sharedText)
+            
+            Toast.makeText(this, "Processed shared text", Toast.LENGTH_LONG).show()
         } else {
-            Log.e(TAG, "File not found or unreadable: $fileName")
-            Toast.makeText(this, "File not found: $fileName", Toast.LENGTH_LONG).show()
-            finish()
+            log("No text content in ACTION_SEND")
         }
+    }
+
+    private fun handleObsidianUrl() {
+        val data = intent?.data
+        
+        if (data != null) {
+            log("Obsidian URL received: $data")
+            
+            // For now, just save the URL info since we can't access vault files easily
+            val urlInfo = """
+Obsidian URL Debug Info
+======================
+Full URL: $data
+Scheme: ${data.scheme}
+Host: ${data.host}
+Path: ${data.path}
+Query: ${data.query}
+Fragment: ${data.fragment}
+
+Extracted filename attempt: ${extractFileName(data.toString())}
+            """.trimIndent()
+            
+            saveFile("obsidian_url_info.txt", urlInfo)
+            
+            Toast.makeText(this, "Received Obsidian URL - check files", Toast.LENGTH_LONG).show()
+        } else {
+            log("No URL data in ACTION_VIEW")
+        }
+    }
+
+    private fun createTestFiles() {
+        log("Creating test files...")
+        
+        // Test markdown content
+        val testMarkdown = """
+# Test D&D Adventure
+
+This is a **test file** created by the D&D PDF Handler app.
+
+## Scene 1: The Tavern
+
+The party enters *The Prancing Pony*, a cozy tavern with:
+- Warm firelight
+- The smell of roasted meat
+- Suspicious looking patrons
+
+> A hooded figure in the corner beckons you over...
+
+### Combat Encounter
+**Goblin Scout**
+- AC: 15
+- HP: 7
+- Speed: 30 ft
+
+**Actions:**
+- Scimitar: +4 to hit, 1d6+2 slashing damage
+
+---
+
+*File created at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}*
+        """.trimIndent()
+        
+        // Save as both markdown and HTML
+        val html = convertMarkdownToHtml(testMarkdown)
+        
+        saveFile("test_adventure.md", testMarkdown)
+        saveFile("test_adventure.html", html)
+        saveFile("debug_log.txt", debugLog.toString())
+        
+        log("Test files created!")
+    }
+
+    private fun convertMarkdownToHtml(markdown: String): String {
+        var html = markdown
+        
+        // Basic markdown conversion
+        html = html.replace(Regex("^# (.+)$", RegexOption.MULTILINE), "<h1>$1</h1>")
+        html = html.replace(Regex("^## (.+)$", RegexOption.MULTILINE), "<h2>$1</h2>")
+        html = html.replace(Regex("^### (.+)$", RegexOption.MULTILINE), "<h3>$1</h3>")
+        html = html.replace(Regex("\\*\\*(.+?)\\*\\*"), "<strong>$1</strong>")
+        html = html.replace(Regex("\\*(.+?)\\*"), "<em>$1</em>")
+        html = html.replace(Regex("^> (.+)$", RegexOption.MULTILINE), "<blockquote>$1</blockquote>")
+        html = html.replace(Regex("^- (.+)$", RegexOption.MULTILINE), "<li>$1</li>")
+        html = html.replace("\n\n", "</p><p>")
+        html = html.replace("\n", "<br>")
+        
+        // Wrap in basic HTML structure
+        return """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>D&D Content</title>
+    <style>
+        body { font-family: serif; line-height: 1.6; margin: 40px; }
+        h1, h2, h3 { color: #8B0000; }
+        blockquote { 
+            border-left: 4px solid #8B0000; 
+            padding-left: 20px; 
+            margin: 20px 0;
+            font-style: italic;
+        }
+        li { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <p>$html</p>
+</body>
+</html>
+        """.trimIndent()
     }
 
     private fun extractFileName(obsidianUri: String): String? {
-        Log.d(TAG, "Extracting filename from: $obsidianUri")
-        
-        // Try multiple patterns for filename extraction
         val patterns = listOf(
             "file=([^&]+)",
             "vault=([^&]+).*?file=([^&]+)",
@@ -175,508 +275,122 @@ class MainActivity : AppCompatActivity() {
             val matchResult = regex.find(obsidianUri)
             if (matchResult != null) {
                 val fileName = if (matchResult.groupValues.size > 2) {
-                    matchResult.groupValues[2] // For vault + file pattern
+                    matchResult.groupValues[2]
                 } else {
                     matchResult.groupValues[1]
                 }
-                val decoded = fileName.replace("%20", " ").replace("%2F", "/")
-                Log.d(TAG, "Pattern '$pattern' matched: $decoded")
-                return decoded
+                return fileName.replace("%20", " ").replace("%2F", "/")
             }
         }
-        
-        Log.w(TAG, "No filename pattern matched")
         return null
     }
 
-    private fun getFileContentAndDocument(treeUri: String, fileName: String): Pair<String?, DocumentFile?> {
+    private fun saveFile(fileName: String, content: String) {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val fullFileName = "DnD_${fileName.substringBeforeLast(".")}_${timestamp}.${fileName.substringAfterLast(".")}"
+        
+        // Try to save to publicly accessible locations
+        val success = tryMediaStoreDownload(fullFileName, content) || 
+                      tryPublicDownloads(fullFileName, content) ||
+                      tryPublicDocuments(fullFileName, content) ||
+                      tryContentResolver(fullFileName, content)
+        
+        if (success) {
+            log("✓ File saved successfully: $fullFileName")
+            Toast.makeText(this, "File saved: $fullFileName", Toast.LENGTH_LONG).show()
+        } else {
+            log("✗ Failed to save file: $fullFileName")
+            Toast.makeText(this, "Failed to save: $fullFileName", Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    private fun tryMediaStoreDownload(fileName: String, content: String): Boolean {
         return try {
-            Log.d(TAG, "Searching for file: $fileName in tree: $treeUri")
-            val rootDoc = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
-            
-            if (rootDoc == null) {
-                Log.e(TAG, "Failed to create DocumentFile from tree URI")
-                return Pair(null, null)
-            }
-            
-            Log.d(TAG, "Root document name: ${rootDoc.name}")
-            Log.d(TAG, "Root document can read: ${rootDoc.canRead()}")
-            
-            // Try different filename variations
-            val fileVariations = listOf(
-                "$fileName.md",
-                fileName,
-                fileName.substringAfterLast("/"), // Remove path if present
-                "${fileName.substringAfterLast("/")}.md"
-            )
-            
-            var fileDocument: DocumentFile? = null
-            for (variation in fileVariations) {
-                Log.d(TAG, "Trying filename variation: $variation")
-                fileDocument = findFileRecursively(rootDoc, variation)
-                if (fileDocument != null) {
-                    Log.d(TAG, "Found file with variation: $variation")
-                    break
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val resolver = contentResolver
+                val contentValues = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, getMimeType(fileName))
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                 }
-            }
-
-            if (fileDocument?.exists() == true && fileDocument.isFile) {
-                Log.d(TAG, "File exists and is readable")
-                val inputStream = contentResolver.openInputStream(fileDocument.uri)
-                val content = inputStream?.bufferedReader().use { it?.readText() }
-                Log.d(TAG, "File content read, length: ${content?.length}")
-                Pair(content, fileDocument)
-            } else {
-                Log.w(TAG, "File not found or not readable")
-                Pair(null, null)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error reading file: ${e.message}", e)
-            Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
-            Pair(null, null)
-        }
-    }
-
-    private fun findFileRecursively(directory: DocumentFile, fileName: String): DocumentFile? {
-        // First check direct children
-        val directMatch = directory.findFile(fileName)
-        if (directMatch != null) return directMatch
-        
-        // Then search subdirectories
-        for (child in directory.listFiles()) {
-            if (child.isDirectory) {
-                val found = findFileRecursively(child, fileName)
-                if (found != null) return found
-            }
-        }
-        return null
-    }
-
-    private fun processMarkdownContent(markdown: String, sourceFile: DocumentFile?) {
-        Log.d(TAG, "Processing markdown content, length: ${markdown.length}")
-        lifecycleScope.launch {
-            try {
-                Toast.makeText(this@MainActivity, "Processing D&D content...", Toast.LENGTH_SHORT).show()
-
-                val styledHtml = convertMarkdownToStyledHtml(markdown)
-                Log.d(TAG, "HTML generated, length: ${styledHtml.length}")
                 
-                // Generate both HTML and PDF files
-                runOnUiThread {
-                    val htmlSuccess = saveHtmlFile(styledHtml, sourceFile)
-                    val pdfSuccess = savePdfFile(styledHtml, sourceFile)
-                    
-                    if (htmlSuccess || pdfSuccess) {
-                        // Load HTML in WebView for preview only if at least one save succeeded
-                        webView.loadDataWithBaseURL(null, styledHtml, "text/html", "UTF-8", null)
-                        
-                        // Auto-close after delay
-                        webView.postDelayed({
-                            finish()
-                        }, 5000)
-                    } else {
-                        Toast.makeText(this@MainActivity, "Failed to save files", Toast.LENGTH_LONG).show()
-                        finish()
+                val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { outputStream ->
+                        outputStream.write(content.toByteArray())
                     }
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error processing content", e)
-                val sw = StringWriter()
-                e.printStackTrace(PrintWriter(sw))
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                    finish()
+                    log("✓ Saved via MediaStore to Downloads: $fileName")
+                    return true
                 }
             }
-        }
-    }
-
-    private fun saveHtmlFile(htmlContent: String, sourceFile: DocumentFile?): Boolean {
-        return try {
-            Log.d(TAG, "Saving HTML file")
-            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val fileName = generateFileName(sourceFile, "html", timestamp)
-            Log.d(TAG, "HTML filename: $fileName")
-
-            val targetDirectory = getTargetDirectory(sourceFile)
-            if (targetDirectory == null) {
-                Log.e(TAG, "No target directory available for HTML")
-                Toast.makeText(this, "No target directory available for HTML", Toast.LENGTH_LONG).show()
-                return false
-            }
-
-            // Try to create the file
-            val htmlFile = targetDirectory.createFile("text/html", fileName)
-            
-            if (htmlFile != null) {
-                Log.d(TAG, "HTML file created: ${htmlFile.uri}")
-                contentResolver.openOutputStream(htmlFile.uri)?.use { outputStream ->
-                    outputStream.write(htmlContent.toByteArray())
-                }
-                Log.d(TAG, "HTML file written successfully")
-                Toast.makeText(this, "HTML saved: $fileName", Toast.LENGTH_SHORT).show()
-                true
-            } else {
-                Log.e(TAG, "Failed to create HTML file")
-                Toast.makeText(this, "Failed to create HTML file", Toast.LENGTH_LONG).show()
-                false
-            }
-            
+            false
         } catch (e: Exception) {
-            Log.e(TAG, "Error saving HTML file", e)
-            Toast.makeText(this, "Error saving HTML: ${e.message}", Toast.LENGTH_SHORT).show()
+            log("MediaStore save failed: ${e.message}")
             false
         }
     }
-
-    private fun savePdfFile(htmlContent: String, sourceFile: DocumentFile?): Boolean {
+    
+    private fun tryPublicDownloads(fileName: String, content: String): Boolean {
         return try {
-            Log.d(TAG, "Generating PDF...")
-            Toast.makeText(this, "Generating PDF...", Toast.LENGTH_SHORT).show()
-            
-            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val fileName = generateFileName(sourceFile, "pdf", timestamp)
-            Log.d(TAG, "PDF filename: $fileName")
-
-            // Convert HTML to PDF using iText
-            val outputStream = ByteArrayOutputStream()
-            HtmlConverter.convertToPdf(htmlContent, outputStream)
-            val pdfBytes = outputStream.toByteArray()
-            Log.d(TAG, "PDF generated, size: ${pdfBytes.size} bytes")
-
-            val targetDirectory = getTargetDirectory(sourceFile)
-            if (targetDirectory == null) {
-                Log.e(TAG, "No target directory available for PDF")
-                Toast.makeText(this, "No target directory available for PDF", Toast.LENGTH_LONG).show()
-                return false
-            }
-
-            // Create the PDF file
-            val pdfFile = targetDirectory.createFile("application/pdf", fileName)
-            
-            if (pdfFile != null) {
-                Log.d(TAG, "PDF file created: ${pdfFile.uri}")
-                contentResolver.openOutputStream(pdfFile.uri)?.use { fileOutputStream ->
-                    fileOutputStream.write(pdfBytes)
-                }
-                Log.d(TAG, "PDF file written successfully")
-                Toast.makeText(this, "PDF saved: $fileName", Toast.LENGTH_LONG).show()
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (downloadsDir != null && (downloadsDir.exists() || downloadsDir.mkdirs())) {
+                val file = File(downloadsDir, fileName)
+                file.writeText(content)
+                log("✓ Saved to public Downloads: ${file.absolutePath}")
                 true
             } else {
-                Log.e(TAG, "Failed to create PDF file")
-                Toast.makeText(this, "Failed to create PDF file", Toast.LENGTH_LONG).show()
                 false
             }
-            
         } catch (e: Exception) {
-            Log.e(TAG, "Error creating PDF", e)
-            Toast.makeText(this, "Error creating PDF: ${e.message}", Toast.LENGTH_SHORT).show()
+            log("Public Downloads save failed: ${e.message}")
             false
         }
     }
-
-    private fun generateFileName(sourceFile: DocumentFile?, extension: String, timestamp: String): String {
-        return if (sourceFile != null) {
-            val baseName = sourceFile.name?.substringBeforeLast(".") ?: "DnD_Adventure"
-            "${baseName}_${timestamp}.${extension}"
-        } else {
-            "DnD_Adventure_${timestamp}.${extension}"
-        }
-    }
-
-    private fun getTargetDirectory(sourceFile: DocumentFile?): DocumentFile? {
-        return if (sourceFile != null && rootDocument != null) {
-            // Try to find parent directory, fall back to root
-            findParentDirectory(sourceFile) ?: rootDocument
-        } else {
-            rootDocument
-        }
-    }
-
-    private fun findParentDirectory(file: DocumentFile): DocumentFile? {
-        // For now, return root directory
-        // Advanced implementation would parse URI structure to find actual parent
-        return rootDocument
-    }
-
-    // Keep your existing convertMarkdownToStyledHtml, convertTables, and buildCompleteHtml methods unchanged
-    private fun convertMarkdownToStyledHtml(markdown: String): String {
-        var html = markdown
-
-        // Convert headers
-        html = html.replace(Regex("^# (.+)$", RegexOption.MULTILINE), "<h1>$1</h1>")
-        html = html.replace(Regex("^## (.+)$", RegexOption.MULTILINE), "<h2>$1</h2>")
-        html = html.replace(Regex("^### (.+)$", RegexOption.MULTILINE), "<h3>$1</h3>")
-        html = html.replace(Regex("^#### (.+)$", RegexOption.MULTILINE), "<h4>$1</h4>")
-
-        // Convert bold and italic
-        html = html.replace(Regex("\\*\\*(.+?)\\*\\*"), "<strong>$1</strong>")
-        html = html.replace(Regex("\\*(.+?)\\*"), "<em>$1</em>")
-
-        // Convert blockquotes
-        html = html.replace(Regex("^> (.+)$", RegexOption.MULTILINE), "<blockquote><p>$1</p></blockquote>")
-
-        // Convert tables
-        html = convertTables(html)
-
-        // Convert line breaks
-        html = html.replace("\n\n", "</p><p>")
-        html = html.replace("\n", "<br>")
-
-        // Wrap in paragraphs if needed
-        if (!html.contains("<h1>") && !html.contains("<div")) {
-            html = "<p>$html</p>"
-        }
-
-        return buildCompleteHtml(html)
-    }
-
-    private fun convertTables(html: String): String {
-        val tableRegex = Regex("\\|(.+)\\|\n\\|[-\\s|:]+\\|\n((?:\\|.+\\|\n?)+)", RegexOption.MULTILINE)
-
-        return tableRegex.replace(html) { matchResult ->
-            val headerRow = matchResult.groupValues[1]
-            val dataRows = matchResult.groupValues[2]
-
-            val headers = headerRow.split("|").map { it.trim() }.filter { it.isNotEmpty() }
-            val rows = dataRows.split("\n").filter { it.isNotEmpty() }
-
-            val tableHtml = StringBuilder("<table>")
-
-            // Add header
-            tableHtml.append("<tr>")
-            headers.forEach { header ->
-                tableHtml.append("<th>$header</th>")
+    
+    private fun tryPublicDocuments(fileName: String, content: String): Boolean {
+        return try {
+            val documentsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+            if (documentsDir != null && (documentsDir.exists() || documentsDir.mkdirs())) {
+                val file = File(documentsDir, fileName)
+                file.writeText(content)
+                log("✓ Saved to public Documents: ${file.absolutePath}")
+                true
+            } else {
+                false
             }
-            tableHtml.append("</tr>")
-
-            // Add data rows
-            rows.forEach { row ->
-                val cells = row.split("|").map { it.trim() }.filter { it.isNotEmpty() }
-                tableHtml.append("<tr>")
-                cells.forEach { cell ->
-                    tableHtml.append("<td>$cell</td>")
-                }
-                tableHtml.append("</tr>")
-            }
-
-            tableHtml.append("</table>")
-            tableHtml.toString()
+        } catch (e: Exception) {
+            log("Public Documents save failed: ${e.message}")
+            false
         }
     }
-
-    private fun buildCompleteHtml(content: String): String {
-        return """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>D&D Adventure</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap');
-        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&display=swap');
-        @import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&display=swap');
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500;1,600&display=swap');
-        
-        :root {
-            --phb-burgundy: #58180D;
-            --phb-gold: #c9ad6a;
-            --phb-cream: #fdf1dc;
-            --phb-dark-cream: #f4e5d0;
-            --phb-brown: #8B7562;
-            --phb-dark-brown: #722F37;
-            --phb-light-gold: #e8d5a3;
-            --phb-shadow: rgba(0, 0, 0, 0.3);
-            --phb-text-shadow: rgba(255, 255, 255, 0.8);
-        }
-        
-        body {
-            font-family: "Cormorant Garamond", "Libre Baskerville", serif;
-            font-size: 15px;
-            line-height: 1.65;
-            color: #000;
-            background-color: var(--phb-cream);
-            background-image: 
-                radial-gradient(circle at 15% 20%, rgba(139, 117, 94, 0.12) 0%, transparent 35%),
-                radial-gradient(circle at 85% 10%, rgba(139, 117, 94, 0.08) 0%, transparent 40%),
-                radial-gradient(circle at 25% 80%, rgba(160, 140, 100, 0.1) 0%, transparent 30%),
-                radial-gradient(circle at 75% 75%, rgba(139, 117, 94, 0.06) 0%, transparent 45%),
-                repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(139, 117, 94, 0.015) 1px, rgba(139, 117, 94, 0.015) 2px),
-                repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(139, 117, 94, 0.015) 1px, rgba(139, 117, 94, 0.015) 2px);
-            padding: 40px;
-            margin: 0;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-        }
-        
-        h1, h2, h3, h4, h5, h6 {
-            font-family: "Cinzel", serif;
-            font-weight: bold;
-            color: var(--phb-burgundy);
-            text-shadow: 1px 1px 0px var(--phb-text-shadow);
-            margin-top: 1.8em;
-            margin-bottom: 0.6em;
-        }
-        
-        h1 {
-            font-family: "Cinzel Decorative", serif;
-            font-size: 2.2em;
-            text-align: center;
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 248, 230, 0.8) 50%, rgba(255, 255, 255, 0.4) 100%);
-            padding: 1em 2em;
-            border-radius: 15px;
-            margin: 2em 0 1.5em 0;
-            border: 3px solid var(--phb-burgundy);
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-        }
-        
-        h2 {
-            font-size: 1.6em;
-            border-bottom: 3px solid var(--phb-gold);
-            padding-bottom: 0.4em;
-            margin: 2em 0 1em 0;
-        }
-        
-        h3 {
-            font-size: 1.35em;
-            position: relative;
-        }
-        
-        h3::after {
-            content: "";
-            position: absolute;
-            bottom: -3px;
-            left: 0;
-            width: 60%;
-            height: 1px;
-            background: linear-gradient(90deg, var(--phb-gold) 0%, transparent 100%);
-        }
-        
-        p {
-            color: #000;
-            text-align: justify;
-            text-indent: 1.2em;
-            margin: 0.9em 0;
-            hyphens: auto;
-        }
-        
-        h1 + p, h2 + p, h3 + p, h4 + p {
-            text-indent: 0;
-        }
-        
-        strong {
-            color: var(--phb-burgundy);
-            font-weight: 700;
-        }
-        
-        em {
-            font-style: italic;
-        }
-        
-        blockquote {
-            background: linear-gradient(135deg, rgba(255, 248, 230, 0.95) 0%, rgba(250, 240, 210, 0.95) 100%);
-            border-left: 6px solid var(--phb-burgundy);
-            border-right: 2px solid var(--phb-gold);
-            color: #000;
-            padding: 1.5em 2em;
-            margin: 2em 0;
-            font-style: italic;
-            border-radius: 0 12px 12px 0;
-            position: relative;
-        }
-        
-        blockquote::before {
-            content: "";
-            font-family: "Cinzel Decorative", serif;
-            font-size: 4em;
-            color: rgba(88, 24, 13, 0.2);
-            position: absolute;
-            top: -0.2em;
-            left: 0.1em;
-        }
-
-        table {
-            width: 100%;
-            margin: 2em 0;
-            border-collapse: separate;
-            border-spacing: 0;
-            background: rgba(255, 252, 245, 0.98);
-            border: 3px solid var(--phb-burgundy);
-            border-radius: 12px;
-            overflow: hidden;
-        }
-
-        th {
-            background: linear-gradient(180deg, #f4b942 0%, #e69a28 50%, #d4841f 100%);
-            color: white;
-            font-family: "Cinzel", serif;
-            font-weight: bold;
-            text-align: center;
-            padding: 1em 0.8em;
-            text-shadow: 0px 1px 0px rgba(0, 0, 0, 0.5);
-        }
-
-        td {
-            background-color: transparent;
-            color: #000;
-            padding: 0.8em;
-            border: 1px solid rgba(201, 173, 106, 0.3);
-            vertical-align: top;
-        }
-
-        tr:nth-child(even) td {
-            background-color: rgba(255, 248, 235, 0.6);
-        }
-
-        .spell, .stat-block, .feature, .magic-item {
-            background: linear-gradient(135deg, rgba(255, 252, 245, 0.95) 0%, rgba(250, 245, 235, 0.95) 100%);
-            border: 3px solid var(--phb-burgundy);
-            border-radius: 12px;
-            padding: 1.5em;
-            margin: 2em 0;
-            position: relative;
-        }
-
-        .spell-title, .feature-title, .magic-item-title {
-            font-family: "Cinzel", serif;
-            font-weight: bold;
-            color: var(--phb-burgundy);
-            font-size: 1.3em;
-            text-align: center;
-            margin: 0 0 0.8em 0;
-            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
-        }
-
-        .stat-block h4 {
-            font-family: "Cinzel Decorative", serif;
-            text-align: center;
-            font-size: 1.5em;
-            margin: 0 0 1em 0;
-            padding: 0.5em;
-            background: linear-gradient(90deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 248, 230, 0.6) 50%, rgba(255, 255, 255, 0.3) 100%);
-            border-radius: 8px;
-        }
-
-        @media print {
-            body {
-                background-color: var(--phb-cream);
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
+    
+    private fun tryContentResolver(fileName: String, content: String): Boolean {
+        return try {
+            // Try using SAF to create a file in Downloads
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = getMimeType(fileName)
+                putExtra(Intent.EXTRA_TITLE, fileName)
             }
-
-            * {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
+            
+            // This would normally require startActivityForResult, but for debugging
+            // we'll just log that this option exists
+            log("Could try SAF document creation (requires user interaction)")
+            false
+        } catch (e: Exception) {
+            log("Content resolver failed: ${e.message}")
+            false
         }
-    </style>
-</head>
-<body>
-    $content
-</body>
-</html>
-        """
+    }
+    
+    private fun getMimeType(fileName: String): String {
+        return when (fileName.substringAfterLast(".").lowercase()) {
+            "html" -> "text/html"
+            "txt" -> "text/plain"
+            "md" -> "text/markdown"
+            "pdf" -> "application/pdf"
+            else -> "text/plain"
+        }
     }
 }
