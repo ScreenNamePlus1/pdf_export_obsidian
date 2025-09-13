@@ -1,38 +1,74 @@
+import com.android.build.api.dsl.ManagedVirtualDevice
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
-    id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.android)
 }
 
-android {
-    compileSdk 34
-    namespace 'com.example.pdfexport'
-    defaultConfig {
-        applicationId "com.example.pdfexport"
-        minSdk 24
-        targetSdk 34
-        versionCode 1
-        versionName "1.0"
-    }
-    
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
+// Start of the signing configuration block
+val signingPropertiesFile = project.rootProject.file("signing.properties")
+val signingProperties = Properties()
+if (signingPropertiesFile.exists()) {
+    signingProperties.load(FileInputStream(signingPropertiesFile))
+}
+// End of the signing configuration block
 
-    kotlinOptions {
-        jvmTarget = '17'
+android {
+    namespace = "com.dndpdf.sharehandler"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.dndpdf.sharehandler"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 29
+        versionName = "29"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // Assign the signing configuration to the release build
+            signingConfig = signingConfigs.getByName("release")
         }
+    }
+
+    // Start of the signing config block
+    signingConfigs {
+        create("release") {
+            storeFile = file("my-release-key.jks")
+            storePassword = signingProperties.getProperty("storePassword")
+            keyAlias = "my-key-alias"
+            keyPassword = signingProperties.getProperty("keyPassword")
+        }
+    }
+    // End of the signing config block
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = "1.8"
     }
 }
 
 dependencies {
-    implementation 'androidx.core:core-ktx:1.12.0'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.11.0'
+    // ... all your dependencies here ...
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.constraintlayout)
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
 }
