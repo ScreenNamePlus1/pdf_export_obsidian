@@ -42,11 +42,14 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x gradlew
 
+    - name: Clean build
+      run: ./gradlew --no-daemon clean
+
     - name: Build Debug APK
-      run: ./gradlew --no-daemon clean assembleDebug
+      run: ./gradlew --no-daemon assembleDebug
 
     - name: Build Release APK
-      run: ./gradlew --no-daemon clean assembleRelease
+      run: ./gradlew --no-daemon assembleRelease
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
