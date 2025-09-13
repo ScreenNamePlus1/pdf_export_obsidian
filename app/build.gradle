@@ -15,20 +15,19 @@ if (signingPropertiesFile.exists()) {
 }
 // End of the signing configuration block
 
-// Start of the signing config block (Moved here for correct ordering)
-signingConfigs {
-    release {
-        storeFile file('my-release-key.jks')
-        storePassword signingProperties.getProperty('storePassword')
-        keyAlias 'my-key-alias'
-        keyPassword signingProperties.getProperty('keyPassword')
-    }
-}
-// End of the signing config block
-
 android {
     namespace = 'com.dndpdf.sharehandler'
     compileSdk = 34
+
+    // The signingConfigs block must go inside the android block.
+    signingConfigs {
+        release {
+            storeFile file('my-release-key.jks')
+            storePassword signingProperties.getProperty('storePassword')
+            keyAlias 'my-key-alias'
+            keyPassword signingProperties.getProperty('keyPassword')
+        }
+    }
 
     defaultConfig {
         applicationId 'com.dndpdf.sharehandler'
@@ -44,7 +43,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Assign the signing configuration to the release build
+            // Assign the signing configuration to the release build.
             signingConfig signingConfigs.release
         }
     }
