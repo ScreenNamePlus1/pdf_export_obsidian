@@ -1,0 +1,6 @@
+# Gradle Wrapper files
+.gradle/
+gradle/wrapper/
+
+# Other large binaries to ignore
+gradle-8.4-bin.zip
