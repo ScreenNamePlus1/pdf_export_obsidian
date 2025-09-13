@@ -15,6 +15,17 @@ if (signingPropertiesFile.exists()) {
 }
 // End of the signing configuration block
 
+// Start of the signing config block (Moved here for correct ordering)
+signingConfigs {
+    release {
+        storeFile file('my-release-key.jks')
+        storePassword signingProperties.getProperty('storePassword')
+        keyAlias 'my-key-alias'
+        keyPassword signingProperties.getProperty('keyPassword')
+    }
+}
+// End of the signing config block
+
 android {
     namespace = 'com.dndpdf.sharehandler'
     compileSdk = 34
@@ -37,17 +48,6 @@ android {
             signingConfig signingConfigs.release
         }
     }
-
-    // Start of the signing config block
-    signingConfigs {
-        release {
-            storeFile file('my-release-key.jks')
-            storePassword signingProperties.getProperty('storePassword')
-            keyAlias 'my-key-alias'
-            keyPassword signingProperties.getProperty('keyPassword')
-        }
-    }
-    // End of the signing config block
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
