@@ -1,7 +1,3 @@
-import com.android.build.api.dsl.ManagedVirtualDevice
-import java.util.Properties
-import java.io.FileInputStream
-
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
@@ -19,7 +15,6 @@ android {
     namespace = 'com.dndpdf.sharehandler'
     compileSdk = 34
 
-    // The signingConfigs block must go inside the android block.
     signingConfigs {
         release {
             storeFile file('my-release-key.jks')
@@ -43,8 +38,11 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Assign the signing configuration to the release build.
             signingConfig signingConfigs.release
+        }
+        debug {
+            debuggable true
+            minifyEnabled false
         }
     }
 
@@ -58,17 +56,16 @@ android {
 }
 
 dependencies {
-    // ... all your dependencies here ...
-    implementation 'androidx.core:core-ktx:1.12.0'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.10.0'
+    implementation 'androidx.core:core-ktx:1.13.1' // Updated to latest
+    implementation 'androidx.appcompat:appcompat:1.7.0' // Updated to latest
+    implementation 'com.google.android.material:material:1.12.0' // Updated to latest
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.6' // Updated to latest
     testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
-    
-    // ADDED: PDF generation libraries
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1' // Updated to latest
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1' // Updated to latest
+
+    // PDF generation libraries (kept but not used in current code)
     implementation 'com.itextpdf:itext7-core:7.2.5'
     implementation 'com.itextpdf:html2pdf:4.0.5'
 }
