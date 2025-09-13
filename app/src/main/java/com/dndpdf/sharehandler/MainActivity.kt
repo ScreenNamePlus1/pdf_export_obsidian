@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -24,16 +25,31 @@ import java.io.ByteArrayOutputStream
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val TAG = "DnDPDFHandler"
+    }
+
     private lateinit var webView: WebView
     private var sourceDocumentFile: DocumentFile? = null
     private var rootDocument: DocumentFile? = null
     
-    // New SAF Launcher
+    // SAF Launcher with proper URI persistence
     private val openDocumentTreeLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
             if (uri != null) {
+                Log.d(TAG, "SAF URI received: $uri")
+                // Take persistable permission
+                try {
+                    contentResolver.takePersistableUriPermission(uri, 
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    Log.d(TAG, "Persistable permission taken successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to take persistable permission", e)
+                }
+                
                 readObsidianFileFromUri(uri.toString())
             } else {
+                Log.w(TAG, "No URI received from SAF picker")
                 Toast.makeText(this, "Obsidian vault not selected.", Toast.LENGTH_SHORT).show()
                 finish()
             }
@@ -41,6 +57,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate called")
 
         // Set up WebView for HTML rendering
         webView = WebView(this)
@@ -54,34 +71,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIncomingContent() {
-        // DEBUG: Add logging to see what we're receiving
+        Log.d(TAG, "handleIncomingContent called")
+        Log.d(TAG, "Intent action: ${intent?.action}")
+        Log.d(TAG, "Intent type: ${intent?.type}")
+        Log.d(TAG, "Intent data: ${intent?.data}")
+        Log.d(TAG, "Intent dataString: ${intent?.dataString}")
+        
+        // Show debug info to user
         Toast.makeText(this, "Intent action: ${intent?.action}, type: ${intent?.type}", Toast.LENGTH_LONG).show()
         
         when {
             intent?.action == Intent.ACTION_SEND -> {
+                Log.d(TAG, "Handling ACTION_SEND")
                 if (intent.type == "text/plain") {
                     val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                    Log.d(TAG, "Shared text length: ${sharedText?.length}")
                     if (sharedText != null) {
-                        Toast.makeText(this, "Received text content", Toast.LENGTH_SHORT).show()
-                        processMarkdownContent(sharedText, null) // No source file for direct text
+                        Toast.makeText(this, "Received text content (${sharedText.length} chars)", Toast.LENGTH_SHORT).show()
+                        processMarkdownContent(sharedText, null)
                     } else {
+                        Log.w(TAG, "No text content in ACTION_SEND")
                         Toast.makeText(this, "No content received", Toast.LENGTH_SHORT).show()
                         finish()
                     }
+                } else {
+                    Log.w(TAG, "Unsupported content type: ${intent.type}")
+                    Toast.makeText(this, "Unsupported content type: ${intent.type}", Toast.LENGTH_SHORT).show()
+                    finish()
                 }
             }
             intent?.action == Intent.ACTION_VIEW -> {
+                Log.d(TAG, "Handling ACTION_VIEW")
                 val data = intent.data
                 if (data != null && data.scheme == "obsidian") {
-                    Toast.makeText(this, "Received Obsidian URL: ${data}", Toast.LENGTH_LONG).show()
-                    // Launch the SAF folder picker for the user to select their vault
+                    Log.d(TAG, "Valid Obsidian URL received: $data")
+                    Toast.makeText(this, "Received Obsidian URL: $data", Toast.LENGTH_LONG).show()
+                    // Launch the SAF folder picker
                     openDocumentTreeLauncher.launch(null)
                 } else {
+                    Log.w(TAG, "Invalid or no URI data: $data")
                     Toast.makeText(this, "No valid content to process", Toast.LENGTH_SHORT).show()
                     finish()
                 }
             }
             else -> {
+                Log.w(TAG, "Unhandled intent action: ${intent?.action}")
                 Toast.makeText(this, "No valid content to process", Toast.LENGTH_SHORT).show()
                 finish()
             }
@@ -89,184 +123,285 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun readObsidianFileFromUri(treeUri: String) {
-        Toast.makeText(this, "DEBUG: readObsidianFileFromUri called", Toast.LENGTH_LONG).show()
+        Log.d(TAG, "readObsidianFileFromUri called with: $treeUri")
         
         val sharedUri = intent?.dataString
-        Toast.makeText(this, "DEBUG: SharedURI: $sharedUri", Toast.LENGTH_LONG).show()
+        Log.d(TAG, "SharedURI from intent: $sharedUri")
         
         if (sharedUri == null) {
+            Log.e(TAG, "No URI data found in intent")
             Toast.makeText(this, "No URI data found", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
         
-        val regex = "file=([^&]+)".toRegex()
-        val matchResult = regex.find(sharedUri)
-        val fileName = matchResult?.groupValues?.getOrNull(1)?.replace("%20", " ")
-
-        Toast.makeText(this, "DEBUG: Extracted filename: $fileName", Toast.LENGTH_LONG).show()
+        // More robust filename extraction
+        val fileName = extractFileName(sharedUri)
+        Log.d(TAG, "Extracted filename: $fileName")
 
         if (fileName.isNullOrEmpty()) {
-            Toast.makeText(this, "Could not extract filename from URL: $sharedUri", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "Could not extract filename from URL: $sharedUri")
+            Toast.makeText(this, "Could not extract filename from URL", Toast.LENGTH_LONG).show()
             finish()
             return
         }
         
         val (content, fileDocument) = getFileContentAndDocument(treeUri, fileName)
         if (content != null && fileDocument != null) {
-            Toast.makeText(this, "DEBUG: File found, processing content...", Toast.LENGTH_LONG).show()
+            Log.d(TAG, "File found successfully, content length: ${content.length}")
+            Toast.makeText(this, "File found, processing content...", Toast.LENGTH_LONG).show()
             sourceDocumentFile = fileDocument
             rootDocument = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
             processMarkdownContent(content, fileDocument)
         } else {
-            Toast.makeText(this, "File not found or unreadable: $fileName", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "File not found or unreadable: $fileName")
+            Toast.makeText(this, "File not found: $fileName", Toast.LENGTH_LONG).show()
             finish()
         }
     }
 
+    private fun extractFileName(obsidianUri: String): String? {
+        Log.d(TAG, "Extracting filename from: $obsidianUri")
+        
+        // Try multiple patterns for filename extraction
+        val patterns = listOf(
+            "file=([^&]+)",
+            "vault=([^&]+).*?file=([^&]+)",
+            "/([^/]+)$"
+        )
+        
+        for (pattern in patterns) {
+            val regex = pattern.toRegex()
+            val matchResult = regex.find(obsidianUri)
+            if (matchResult != null) {
+                val fileName = if (matchResult.groupValues.size > 2) {
+                    matchResult.groupValues[2] // For vault + file pattern
+                } else {
+                    matchResult.groupValues[1]
+                }
+                val decoded = fileName.replace("%20", " ").replace("%2F", "/")
+                Log.d(TAG, "Pattern '$pattern' matched: $decoded")
+                return decoded
+            }
+        }
+        
+        Log.w(TAG, "No filename pattern matched")
+        return null
+    }
+
     private fun getFileContentAndDocument(treeUri: String, fileName: String): Pair<String?, DocumentFile?> {
         return try {
+            Log.d(TAG, "Searching for file: $fileName in tree: $treeUri")
             val rootDoc = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
-            val fileDocument = rootDoc?.findFile("$fileName.md") ?: rootDoc?.findFile(fileName)
+            
+            if (rootDoc == null) {
+                Log.e(TAG, "Failed to create DocumentFile from tree URI")
+                return Pair(null, null)
+            }
+            
+            Log.d(TAG, "Root document name: ${rootDoc.name}")
+            Log.d(TAG, "Root document can read: ${rootDoc.canRead()}")
+            
+            // Try different filename variations
+            val fileVariations = listOf(
+                "$fileName.md",
+                fileName,
+                fileName.substringAfterLast("/"), // Remove path if present
+                "${fileName.substringAfterLast("/")}.md"
+            )
+            
+            var fileDocument: DocumentFile? = null
+            for (variation in fileVariations) {
+                Log.d(TAG, "Trying filename variation: $variation")
+                fileDocument = findFileRecursively(rootDoc, variation)
+                if (fileDocument != null) {
+                    Log.d(TAG, "Found file with variation: $variation")
+                    break
+                }
+            }
 
             if (fileDocument?.exists() == true && fileDocument.isFile) {
+                Log.d(TAG, "File exists and is readable")
                 val inputStream = contentResolver.openInputStream(fileDocument.uri)
                 val content = inputStream?.bufferedReader().use { it?.readText() }
+                Log.d(TAG, "File content read, length: ${content?.length}")
                 Pair(content, fileDocument)
             } else {
+                Log.w(TAG, "File not found or not readable")
                 Pair(null, null)
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Error reading file: ${e.message}", e)
             Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
             Pair(null, null)
         }
     }
 
+    private fun findFileRecursively(directory: DocumentFile, fileName: String): DocumentFile? {
+        // First check direct children
+        val directMatch = directory.findFile(fileName)
+        if (directMatch != null) return directMatch
+        
+        // Then search subdirectories
+        for (child in directory.listFiles()) {
+            if (child.isDirectory) {
+                val found = findFileRecursively(child, fileName)
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
     private fun processMarkdownContent(markdown: String, sourceFile: DocumentFile?) {
+        Log.d(TAG, "Processing markdown content, length: ${markdown.length}")
         lifecycleScope.launch {
             try {
                 Toast.makeText(this@MainActivity, "Processing D&D content...", Toast.LENGTH_SHORT).show()
 
                 val styledHtml = convertMarkdownToStyledHtml(markdown)
+                Log.d(TAG, "HTML generated, length: ${styledHtml.length}")
                 
                 // Generate both HTML and PDF files
                 runOnUiThread {
-                    saveHtmlFile(styledHtml, sourceFile)
-                    savePdfFile(styledHtml, sourceFile)
+                    val htmlSuccess = saveHtmlFile(styledHtml, sourceFile)
+                    val pdfSuccess = savePdfFile(styledHtml, sourceFile)
+                    
+                    if (htmlSuccess || pdfSuccess) {
+                        // Load HTML in WebView for preview only if at least one save succeeded
+                        webView.loadDataWithBaseURL(null, styledHtml, "text/html", "UTF-8", null)
+                        
+                        // Auto-close after delay
+                        webView.postDelayed({
+                            finish()
+                        }, 5000)
+                    } else {
+                        Toast.makeText(this@MainActivity, "Failed to save files", Toast.LENGTH_LONG).show()
+                        finish()
+                    }
                 }
 
             } catch (e: Exception) {
+                Log.e(TAG, "Error processing content", e)
                 val sw = StringWriter()
                 e.printStackTrace(PrintWriter(sw))
-                Toast.makeText(this@MainActivity, "Error: ${e.message}\n$sw", Toast.LENGTH_LONG).show()
-                finish()
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                    finish()
+                }
             }
         }
     }
 
-    private fun saveHtmlFile(htmlContent: String, sourceFile: DocumentFile?) {
-        try {
+    private fun saveHtmlFile(htmlContent: String, sourceFile: DocumentFile?): Boolean {
+        return try {
+            Log.d(TAG, "Saving HTML file")
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val fileName = if (sourceFile != null) {
-                val baseName = sourceFile.name?.substringBeforeLast(".") ?: "DnD_Adventure"
-                "${baseName}_${timestamp}.html"
-            } else {
-                "DnD_Adventure_${timestamp}.html"
-            }
+            val fileName = generateFileName(sourceFile, "html", timestamp)
+            Log.d(TAG, "HTML filename: $fileName")
 
-            // If we have a source file, save in the same directory
-            val targetDirectory = if (sourceFile != null && rootDocument != null) {
-                // Try to find the parent directory of the source file
-                findParentDirectory(sourceFile) ?: rootDocument
-            } else {
-                // If no source file, try to save in Downloads or root of selected directory
-                rootDocument
-            }
-
-            if (targetDirectory != null) {
-                // Create the HTML file
-                val htmlFile = targetDirectory.createFile("text/html", fileName)
-                
-                if (htmlFile != null) {
-                    contentResolver.openOutputStream(htmlFile.uri)?.use { outputStream ->
-                        outputStream.write(htmlContent.toByteArray())
-                    }
-                    
-                    Toast.makeText(this, "HTML saved as: $fileName", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Failed to create HTML file", Toast.LENGTH_LONG).show()
-                }
-            } else {
+            val targetDirectory = getTargetDirectory(sourceFile)
+            if (targetDirectory == null) {
+                Log.e(TAG, "No target directory available for HTML")
                 Toast.makeText(this, "No target directory available for HTML", Toast.LENGTH_LONG).show()
+                return false
+            }
+
+            // Try to create the file
+            val htmlFile = targetDirectory.createFile("text/html", fileName)
+            
+            if (htmlFile != null) {
+                Log.d(TAG, "HTML file created: ${htmlFile.uri}")
+                contentResolver.openOutputStream(htmlFile.uri)?.use { outputStream ->
+                    outputStream.write(htmlContent.toByteArray())
+                }
+                Log.d(TAG, "HTML file written successfully")
+                Toast.makeText(this, "HTML saved: $fileName", Toast.LENGTH_SHORT).show()
+                true
+            } else {
+                Log.e(TAG, "Failed to create HTML file")
+                Toast.makeText(this, "Failed to create HTML file", Toast.LENGTH_LONG).show()
+                false
             }
             
         } catch (e: Exception) {
-            Toast.makeText(this, "Error saving HTML file: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Error saving HTML file", e)
+            Toast.makeText(this, "Error saving HTML: ${e.message}", Toast.LENGTH_SHORT).show()
+            false
         }
     }
 
-    private fun savePdfFile(htmlContent: String, sourceFile: DocumentFile?) {
-        try {
+    private fun savePdfFile(htmlContent: String, sourceFile: DocumentFile?): Boolean {
+        return try {
+            Log.d(TAG, "Generating PDF...")
             Toast.makeText(this, "Generating PDF...", Toast.LENGTH_SHORT).show()
             
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val fileName = if (sourceFile != null) {
-                val baseName = sourceFile.name?.substringBeforeLast(".") ?: "DnD_Adventure"
-                "${baseName}_${timestamp}.pdf"
-            } else {
-                "DnD_Adventure_${timestamp}.pdf"
-            }
+            val fileName = generateFileName(sourceFile, "pdf", timestamp)
+            Log.d(TAG, "PDF filename: $fileName")
 
             // Convert HTML to PDF using iText
             val outputStream = ByteArrayOutputStream()
             HtmlConverter.convertToPdf(htmlContent, outputStream)
             val pdfBytes = outputStream.toByteArray()
+            Log.d(TAG, "PDF generated, size: ${pdfBytes.size} bytes")
 
-            // If we have a source file, save in the same directory
-            val targetDirectory = if (sourceFile != null && rootDocument != null) {
-                findParentDirectory(sourceFile) ?: rootDocument
-            } else {
-                rootDocument
+            val targetDirectory = getTargetDirectory(sourceFile)
+            if (targetDirectory == null) {
+                Log.e(TAG, "No target directory available for PDF")
+                Toast.makeText(this, "No target directory available for PDF", Toast.LENGTH_LONG).show()
+                return false
             }
 
-            if (targetDirectory != null) {
-                // Create the PDF file
-                val pdfFile = targetDirectory.createFile("application/pdf", fileName)
-                
-                if (pdfFile != null) {
-                    contentResolver.openOutputStream(pdfFile.uri)?.use { fileOutputStream ->
-                        fileOutputStream.write(pdfBytes)
-                    }
-                    
-                    Toast.makeText(this, "PDF saved as: $fileName", Toast.LENGTH_LONG).show()
-                    
-                    // Load the HTML in WebView for preview
-                    webView.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
-                    
-                    // Auto-close after a delay
-                    webView.postDelayed({
-                        finish()
-                    }, 4000) // Extended to 4 seconds to see both save messages
-                } else {
-                    Toast.makeText(this, "Failed to create PDF file", Toast.LENGTH_LONG).show()
+            // Create the PDF file
+            val pdfFile = targetDirectory.createFile("application/pdf", fileName)
+            
+            if (pdfFile != null) {
+                Log.d(TAG, "PDF file created: ${pdfFile.uri}")
+                contentResolver.openOutputStream(pdfFile.uri)?.use { fileOutputStream ->
+                    fileOutputStream.write(pdfBytes)
                 }
+                Log.d(TAG, "PDF file written successfully")
+                Toast.makeText(this, "PDF saved: $fileName", Toast.LENGTH_LONG).show()
+                true
             } else {
-                Toast.makeText(this, "No target directory available for PDF", Toast.LENGTH_LONG).show()
+                Log.e(TAG, "Failed to create PDF file")
+                Toast.makeText(this, "Failed to create PDF file", Toast.LENGTH_LONG).show()
+                false
             }
             
         } catch (e: Exception) {
-            Toast.makeText(this, "Error creating PDF: ${e.message}", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "Error creating PDF", e)
+            Toast.makeText(this, "Error creating PDF: ${e.message}", Toast.LENGTH_SHORT).show()
+            false
+        }
+    }
+
+    private fun generateFileName(sourceFile: DocumentFile?, extension: String, timestamp: String): String {
+        return if (sourceFile != null) {
+            val baseName = sourceFile.name?.substringBeforeLast(".") ?: "DnD_Adventure"
+            "${baseName}_${timestamp}.${extension}"
+        } else {
+            "DnD_Adventure_${timestamp}.${extension}"
+        }
+    }
+
+    private fun getTargetDirectory(sourceFile: DocumentFile?): DocumentFile? {
+        return if (sourceFile != null && rootDocument != null) {
+            // Try to find parent directory, fall back to root
+            findParentDirectory(sourceFile) ?: rootDocument
+        } else {
+            rootDocument
         }
     }
 
     private fun findParentDirectory(file: DocumentFile): DocumentFile? {
-        // This is tricky with SAF - we'll use the root directory for now
-        // In a more advanced implementation, you'd need to parse the URI structure
+        // For now, return root directory
+        // Advanced implementation would parse URI structure to find actual parent
         return rootDocument
     }
 
+    // Keep your existing convertMarkdownToStyledHtml, convertTables, and buildCompleteHtml methods unchanged
     private fun convertMarkdownToStyledHtml(markdown: String): String {
-        // Convert markdown to HTML with D&D styling
         var html = markdown
 
         // Convert headers
@@ -282,17 +417,14 @@ class MainActivity : AppCompatActivity() {
         // Convert blockquotes
         html = html.replace(Regex("^> (.+)$", RegexOption.MULTILINE), "<blockquote><p>$1</p></blockquote>")
 
-        // Convert HTML div blocks (spell blocks, stat blocks, etc.)
-        // These are already in HTML format, so preserve them
-
-        // Convert tables (basic implementation)
+        // Convert tables
         html = convertTables(html)
 
         // Convert line breaks
         html = html.replace("\n\n", "</p><p>")
         html = html.replace("\n", "<br>")
 
-        // Wrap in paragraphs
+        // Wrap in paragraphs if needed
         if (!html.contains("<h1>") && !html.contains("<div")) {
             html = "<p>$html</p>"
         }
@@ -498,7 +630,6 @@ class MainActivity : AppCompatActivity() {
             background-color: rgba(255, 248, 235, 0.6);
         }
 
-        /* D&D Content Blocks */
         .spell, .stat-block, .feature, .magic-item {
             background: linear-gradient(135deg, rgba(255, 252, 245, 0.95) 0%, rgba(250, 245, 235, 0.95) 100%);
             border: 3px solid var(--phb-burgundy);
