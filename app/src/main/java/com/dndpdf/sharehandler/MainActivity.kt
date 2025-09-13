@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity() {
 
         // Set up WebView for PDF generation
         webView = WebView(this)
+        setContentView(webView) // FIXED: Added missing setContentView
         webView.webViewClient = WebViewClient()
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -80,24 +81,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // New function to read from the selected URI
+    // FIXED: Added proper null checks and error handling
     private fun readObsidianFileFromUri(treeUri: String) {
-        // Parse the original obsidian URL from the intent to get the file name
-        val sharedUri = intent.dataString
+        val sharedUri = intent?.dataString
+        if (sharedUri == null) {
+            Toast.makeText(this, "No URI data found", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        
         val regex = "file=([^&]+)".toRegex()
-        val matchResult = regex.find(sharedUri ?: "")
-        val fileName = matchResult?.groupValues?.get(1)?.replace("%20", " ")
+        val matchResult = regex.find(sharedUri)
+        val fileName = matchResult?.groupValues?.getOrNull(1)?.replace("%20", " ")
 
-        if (fileName != null) {
-            val content = getFileContentFromDocumentTree(treeUri, fileName)
-            if (content != null) {
-                processMarkdownContent(content)
-            } else {
-                Toast.makeText(this, "File not found or unreadable.", Toast.LENGTH_LONG).show()
-                finish()
-            }
+        if (fileName.isNullOrEmpty()) {
+            Toast.makeText(this, "Could not extract filename from URL: $sharedUri", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
+        
+        val content = getFileContentFromDocumentTree(treeUri, fileName)
+        if (content != null) {
+            processMarkdownContent(content)
         } else {
-            Toast.makeText(this, "Invalid Obsidian URL.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "File not found or unreadable: $fileName", Toast.LENGTH_LONG).show()
             finish()
         }
     }
@@ -115,6 +122,8 @@ class MainActivity : AppCompatActivity() {
                 null
             }
         } catch (e: Exception) {
+            // FIXED: Added logging of the actual exception
+            Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
             null
         }
     }
@@ -125,7 +134,11 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "Processing D&D content...", Toast.LENGTH_SHORT).show()
 
                 val styledHtml = convertMarkdownToStyledHtml(markdown)
-                generatePdf(styledHtml)
+                
+                // FIXED: Ensure WebView operations are on main thread
+                runOnUiThread {
+                    generatePdf(styledHtml)
+                }
 
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
