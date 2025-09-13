@@ -35,10 +35,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-gradle-
 
-    - name: Clean Gradle Cache
-      run: |
-        rm -rf ~/.gradle/caches/
-
     - name: Make gradlew executable
       run: chmod +x gradlew
 

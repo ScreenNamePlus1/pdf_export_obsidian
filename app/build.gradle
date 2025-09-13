@@ -5,6 +5,7 @@ plugins {
 
 android {
     compileSdk 34
+    namespace 'com.example.pdfexport'
     defaultConfig {
         applicationId "com.example.pdfexport"
         minSdk 24
