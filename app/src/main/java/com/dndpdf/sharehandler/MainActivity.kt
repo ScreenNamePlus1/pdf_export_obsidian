@@ -89,7 +89,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun readObsidianFileFromUri(treeUri: String) {
+        Toast.makeText(this, "DEBUG: readObsidianFileFromUri called", Toast.LENGTH_LONG).show()
+        
         val sharedUri = intent?.dataString
+        Toast.makeText(this, "DEBUG: SharedURI: $sharedUri", Toast.LENGTH_LONG).show()
+        
         if (sharedUri == null) {
             Toast.makeText(this, "No URI data found", Toast.LENGTH_SHORT).show()
             finish()
@@ -100,6 +104,8 @@ class MainActivity : AppCompatActivity() {
         val matchResult = regex.find(sharedUri)
         val fileName = matchResult?.groupValues?.getOrNull(1)?.replace("%20", " ")
 
+        Toast.makeText(this, "DEBUG: Extracted filename: $fileName", Toast.LENGTH_LONG).show()
+
         if (fileName.isNullOrEmpty()) {
             Toast.makeText(this, "Could not extract filename from URL: $sharedUri", Toast.LENGTH_LONG).show()
             finish()
@@ -108,6 +114,7 @@ class MainActivity : AppCompatActivity() {
         
         val (content, fileDocument) = getFileContentAndDocument(treeUri, fileName)
         if (content != null && fileDocument != null) {
+            Toast.makeText(this, "DEBUG: File found, processing content...", Toast.LENGTH_LONG).show()
             sourceDocumentFile = fileDocument
             rootDocument = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
             processMarkdownContent(content, fileDocument)
