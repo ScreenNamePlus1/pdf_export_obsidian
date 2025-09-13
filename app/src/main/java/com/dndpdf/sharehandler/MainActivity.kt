@@ -5,9 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.print.PrintAttributes
-import android.print.PrintDocumentAdapter
-import android.print.PrintManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -16,20 +13,27 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
-import java.io.File
-import java.io.FileOutputStream
-import android.os.Environment
+import java.io.PrintWriter
+import java.io.StringWriter
+import java.text.SimpleDateFormat
+import java.util.*
+
+// iText PDF imports
+import com.itextpdf.html2pdf.HtmlConverter
+import com.itextpdf.kernel.pdf.PdfDocument
+import com.itextpdf.kernel.pdf.PdfWriter
+import java.io.ByteArrayOutputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private var sourceDocumentFile: DocumentFile? = null
+    private var rootDocument: DocumentFile? = null
     
     // New SAF Launcher
     private val openDocumentTreeLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
             if (uri != null) {
-                // You can save this URI persistently using SharedPreferences if you want
-                // to avoid asking the user every time.
                 readObsidianFileFromUri(uri.toString())
             } else {
                 Toast.makeText(this, "Obsidian vault not selected.", Toast.LENGTH_SHORT).show()
@@ -40,9 +44,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Set up WebView for PDF generation
+        // Set up WebView for HTML rendering
         webView = WebView(this)
-        setContentView(webView) // FIXED: Added missing setContentView
+        setContentView(webView)
         webView.webViewClient = WebViewClient()
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -52,12 +56,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIncomingContent() {
+        // DEBUG: Add logging to see what we're receiving
+        Toast.makeText(this, "Intent action: ${intent?.action}, type: ${intent?.type}", Toast.LENGTH_LONG).show()
+        
         when {
             intent?.action == Intent.ACTION_SEND -> {
                 if (intent.type == "text/plain") {
                     val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
                     if (sharedText != null) {
-                        processMarkdownContent(sharedText)
+                        Toast.makeText(this, "Received text content", Toast.LENGTH_SHORT).show()
+                        processMarkdownContent(sharedText, null) // No source file for direct text
                     } else {
                         Toast.makeText(this, "No content received", Toast.LENGTH_SHORT).show()
                         finish()
@@ -67,6 +75,7 @@ class MainActivity : AppCompatActivity() {
             intent?.action == Intent.ACTION_VIEW -> {
                 val data = intent.data
                 if (data != null && data.scheme == "obsidian") {
+                    Toast.makeText(this, "Received Obsidian URL: ${data}", Toast.LENGTH_LONG).show()
                     // Launch the SAF folder picker for the user to select their vault
                     openDocumentTreeLauncher.launch(null)
                 } else {
@@ -81,7 +90,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // FIXED: Added proper null checks and error handling
     private fun readObsidianFileFromUri(treeUri: String) {
         val sharedUri = intent?.dataString
         if (sharedUri == null) {
@@ -100,51 +108,156 @@ class MainActivity : AppCompatActivity() {
             return
         }
         
-        val content = getFileContentFromDocumentTree(treeUri, fileName)
-        if (content != null) {
-            processMarkdownContent(content)
+        val (content, fileDocument) = getFileContentAndDocument(treeUri, fileName)
+        if (content != null && fileDocument != null) {
+            sourceDocumentFile = fileDocument
+            rootDocument = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
+            processMarkdownContent(content, fileDocument)
         } else {
             Toast.makeText(this, "File not found or unreadable: $fileName", Toast.LENGTH_LONG).show()
             finish()
         }
     }
 
-    // New function to get file content via SAF
-    private fun getFileContentFromDocumentTree(treeUri: String, fileName: String): String? {
+    private fun getFileContentAndDocument(treeUri: String, fileName: String): Pair<String?, DocumentFile?> {
         return try {
-            val rootDocument = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
-            val fileDocument = rootDocument?.findFile("$fileName.md") ?: rootDocument?.findFile(fileName)
+            val rootDoc = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
+            val fileDocument = rootDoc?.findFile("$fileName.md") ?: rootDoc?.findFile(fileName)
 
             if (fileDocument?.exists() == true && fileDocument.isFile) {
                 val inputStream = contentResolver.openInputStream(fileDocument.uri)
-                inputStream?.bufferedReader().use { it?.readText() }
+                val content = inputStream?.bufferedReader().use { it?.readText() }
+                Pair(content, fileDocument)
             } else {
-                null
+                Pair(null, null)
             }
         } catch (e: Exception) {
-            // FIXED: Added logging of the actual exception
             Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
-            null
+            Pair(null, null)
         }
     }
 
-    private fun processMarkdownContent(markdown: String) {
+    private fun processMarkdownContent(markdown: String, sourceFile: DocumentFile?) {
         lifecycleScope.launch {
             try {
                 Toast.makeText(this@MainActivity, "Processing D&D content...", Toast.LENGTH_SHORT).show()
 
                 val styledHtml = convertMarkdownToStyledHtml(markdown)
                 
-                // FIXED: Ensure WebView operations are on main thread
+                // Generate both HTML and PDF files
                 runOnUiThread {
-                    generatePdf(styledHtml)
+                    saveHtmlFile(styledHtml, sourceFile)
+                    savePdfFile(styledHtml, sourceFile)
                 }
 
             } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                val sw = StringWriter()
+                e.printStackTrace(PrintWriter(sw))
+                Toast.makeText(this@MainActivity, "Error: ${e.message}\n$sw", Toast.LENGTH_LONG).show()
                 finish()
             }
         }
+    }
+
+    private fun saveHtmlFile(htmlContent: String, sourceFile: DocumentFile?) {
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = if (sourceFile != null) {
+                val baseName = sourceFile.name?.substringBeforeLast(".") ?: "DnD_Adventure"
+                "${baseName}_${timestamp}.html"
+            } else {
+                "DnD_Adventure_${timestamp}.html"
+            }
+
+            // If we have a source file, save in the same directory
+            val targetDirectory = if (sourceFile != null && rootDocument != null) {
+                // Try to find the parent directory of the source file
+                findParentDirectory(sourceFile) ?: rootDocument
+            } else {
+                // If no source file, try to save in Downloads or root of selected directory
+                rootDocument
+            }
+
+            if (targetDirectory != null) {
+                // Create the HTML file
+                val htmlFile = targetDirectory.createFile("text/html", fileName)
+                
+                if (htmlFile != null) {
+                    contentResolver.openOutputStream(htmlFile.uri)?.use { outputStream ->
+                        outputStream.write(htmlContent.toByteArray())
+                    }
+                    
+                    Toast.makeText(this, "HTML saved as: $fileName", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Failed to create HTML file", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Toast.makeText(this, "No target directory available for HTML", Toast.LENGTH_LONG).show()
+            }
+            
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error saving HTML file: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun savePdfFile(htmlContent: String, sourceFile: DocumentFile?) {
+        try {
+            Toast.makeText(this, "Generating PDF...", Toast.LENGTH_SHORT).show()
+            
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = if (sourceFile != null) {
+                val baseName = sourceFile.name?.substringBeforeLast(".") ?: "DnD_Adventure"
+                "${baseName}_${timestamp}.pdf"
+            } else {
+                "DnD_Adventure_${timestamp}.pdf"
+            }
+
+            // Convert HTML to PDF using iText
+            val outputStream = ByteArrayOutputStream()
+            HtmlConverter.convertToPdf(htmlContent, outputStream)
+            val pdfBytes = outputStream.toByteArray()
+
+            // If we have a source file, save in the same directory
+            val targetDirectory = if (sourceFile != null && rootDocument != null) {
+                findParentDirectory(sourceFile) ?: rootDocument
+            } else {
+                rootDocument
+            }
+
+            if (targetDirectory != null) {
+                // Create the PDF file
+                val pdfFile = targetDirectory.createFile("application/pdf", fileName)
+                
+                if (pdfFile != null) {
+                    contentResolver.openOutputStream(pdfFile.uri)?.use { fileOutputStream ->
+                        fileOutputStream.write(pdfBytes)
+                    }
+                    
+                    Toast.makeText(this, "PDF saved as: $fileName", Toast.LENGTH_LONG).show()
+                    
+                    // Load the HTML in WebView for preview
+                    webView.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
+                    
+                    // Auto-close after a delay
+                    webView.postDelayed({
+                        finish()
+                    }, 4000) // Extended to 4 seconds to see both save messages
+                } else {
+                    Toast.makeText(this, "Failed to create PDF file", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Toast.makeText(this, "No target directory available for PDF", Toast.LENGTH_LONG).show()
+            }
+            
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error creating PDF: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun findParentDirectory(file: DocumentFile): DocumentFile? {
+        // This is tricky with SAF - we'll use the root directory for now
+        // In a more advanced implementation, you'd need to parse the URI structure
+        return rootDocument
     }
 
     private fun convertMarkdownToStyledHtml(markdown: String): String {
@@ -429,34 +542,5 @@ class MainActivity : AppCompatActivity() {
 </body>
 </html>
         """
-    }
-
-    private fun generatePdf(htmlContent: String) {
-        webView.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
-
-        webView.setWebViewClient(object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                createPdfFromWebView()
-            }
-        })
-    }
-
-    private fun createPdfFromWebView() {
-        val printManager = getSystemService(Context.PRINT_SERVICE) as PrintManager
-        val printAdapter: PrintDocumentAdapter = webView.createPrintDocumentAdapter("DnD_Adventure")
-
-        val printAttributes = PrintAttributes.Builder()
-            .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
-            .setResolution(PrintAttributes.Resolution("pdf", "pdf", 600, 600))
-            .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
-            .build()
-
-        val fileName = "DnD_Adventure_${System.currentTimeMillis()}"
-
-        printManager.print(fileName, printAdapter, printAttributes)
-
-        Toast.makeText(this, "PDF generation started!", Toast.LENGTH_LONG).show()
-        finish()
     }
 }
