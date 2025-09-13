@@ -20,8 +20,6 @@ import java.util.*
 
 // iText PDF imports
 import com.itextpdf.html2pdf.HtmlConverter
-import com.itextpdf.kernel.pdf.PdfDocument
-import com.itextpdf.kernel.pdf.PdfWriter
 import java.io.ByteArrayOutputStream
 
 class MainActivity : AppCompatActivity() {
