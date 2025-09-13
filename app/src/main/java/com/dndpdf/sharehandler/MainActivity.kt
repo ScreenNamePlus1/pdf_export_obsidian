@@ -10,7 +10,6 @@ import android.provider.MediaStore
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.itextpdf.html2pdf.HtmlConverter
-import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -281,6 +280,31 @@ The party enters *The Prancing Pony*, a cozy tavern with:
         """.trimIndent()
     }
 
+    private fun extractFileName(obsidianUri: String): String? {
+        log("Extracting filename from URI: $obsidianUri")
+        val patterns = listOf(
+            "file=([^&]+)",
+            "vault=([^&]+).*?file=([^&]+)",
+            "/([^/]+)$"
+        )
+
+        for (pattern in patterns) {
+            val regex = pattern.toRegex()
+            val matchResult = regex.find(obsidianUri)
+            if (matchResult != null) {
+                val fileName = if (matchResult.groupValues.size > 2) {
+                    matchResult.groupValues[2]
+                } else {
+                    matchResult.groupValues[1]
+                }
+                log("Extracted filename: $fileName")
+                return fileName.replace("%20", " ").replace("%2F", "/")
+            }
+        }
+        log("No filename extracted from URI")
+        return null
+    }
+
     private fun saveFile(fileName: String, content: String): Boolean {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val fullFileName = "DnD_${fileName.substringBeforeLast(".")}_${timestamp}.${fileName.substringAfterLast(".")}"
@@ -342,31 +366,6 @@ The party enters *The Prancing Pony*, a cozy tavern with:
             Toast.makeText(this, "Failed to save PDF: $fullFileName (${e.message})", Toast.LENGTH_LONG).show()
             return false
         }
-    }
-
-    private fun extractFileName(obsidianUri: String): String? {
-        log("Extracting filename from URI: $obsidianUri")
-        val patterns = listOf(
-            "file=([^&]+)",
-            "vault=([^&]+).*?file=([^&]+)",
-            "/([^/]+)$"
-        )
-
-        for (pattern in patterns) {
-            val regex = pattern.toRegex()
-            val matchResult = regex.find(obsidianUri)
-            if (matchResult != null) {
-                val fileName = if (matchResult.groupValues.size > 2) {
-                    matchResult.groupValues[2]
-                } else {
-                    matchResult.groupValues[1]
-                }
-                log("Extracted filename: $fileName")
-                return fileName.replace("%20", " ").replace("%2F", "/")
-            }
-        }
-        log("No filename extracted from URI")
-        return null
     }
 
     private fun getMimeType(fileName: String): String {
