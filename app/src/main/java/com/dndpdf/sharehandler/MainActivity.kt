@@ -10,6 +10,8 @@ import android.provider.MediaStore
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.itextpdf.html2pdf.HtmlConverter
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -20,25 +22,15 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // No UI, process intent and finish
         log("=== D&D PDF HANDLER DEBUG ===")
         log("App started at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
         log("Build version: ${Build.VERSION.SDK_INT} (API ${Build.VERSION.CODENAME})")
         log("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
 
-        // Analyze the intent
         analyzeIntent()
-
-        // Show file locations
         showFileLocations()
-
-        // Handle the intent
         handleIntent()
-
-        // Save debug log
         saveFile("debug_log.txt", debugLog.toString())
-
-        // Finish immediately
         finish()
     }
 
@@ -70,13 +62,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showFileLocations() {
         log("\n=== FILE LOCATIONS ===")
-
-        // Internal storage
         log("Internal files dir: ${filesDir.absolutePath}")
         log("Internal exists: ${filesDir.exists()}")
         log("Internal writable: ${filesDir.canWrite()}")
 
-        // External storage
         val externalFiles = getExternalFilesDir(null)
         if (externalFiles != null) {
             log("External files dir: ${externalFiles.absolutePath}")
@@ -86,7 +75,6 @@ class MainActivity : AppCompatActivity() {
             log("External storage not available")
         }
 
-        // Downloads folder
         val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
         if (downloadsDir != null) {
             log("Downloads dir: ${downloadsDir.absolutePath}")
@@ -102,14 +90,8 @@ class MainActivity : AppCompatActivity() {
         log("Intent received: ${intent?.toString() ?: "null"}")
 
         when (intent?.action) {
-            Intent.ACTION_SEND -> {
-                log("Processing ACTION_SEND")
-                handleTextShare()
-            }
-            Intent.ACTION_VIEW -> {
-                log("Processing ACTION_VIEW")
-                handleObsidianUrl()
-            }
+            Intent.ACTION_SEND -> handleTextShare()
+            Intent.ACTION_VIEW -> handleObsidianUrl()
             Intent.ACTION_MAIN -> {
                 log("App launched directly (not shared)")
                 createTestFiles()
@@ -122,29 +104,45 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleTextShare() {
+        log("Entering handleTextShare")
         val sharedText = intent?.getStringExtra(Intent.EXTRA_TEXT)
+        val sharedStreamUri = intent?.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
 
         if (sharedText != null) {
             log("Got shared text, length: ${sharedText.length}")
             log("Shared text preview: ${sharedText.take(200)}")
-
-            // Convert to HTML and PDF
             val html = convertMarkdownToHtml(sharedText)
             saveFile("shared_content.html", html)
             saveFile("shared_content.txt", sharedText)
             saveFileAsPdf("shared_content.pdf", html)
-
             Toast.makeText(this, "Processed shared text to HTML and PDF", Toast.LENGTH_LONG).show()
+        } else if (sharedStreamUri != null) {
+            log("Got shared file URI: $sharedStreamUri")
+            val fileContent = readFileContent(sharedStreamUri)
+            if (fileContent != null) {
+                log("Read file content, length: ${fileContent.length}")
+                log("File content preview: ${fileContent.take(200)}")
+                val fileName = sharedStreamUri.lastPathSegment?.replace("%20", " ") ?: "shared_file"
+                val html = convertMarkdownToHtml(fileContent)
+                saveFile("${fileName}.html", html)
+                saveFile("${fileName}.txt", fileContent)
+                saveFileAsPdf("${fileName}.pdf", html)
+                Toast.makeText(this, "Processed shared file to HTML and PDF", Toast.LENGTH_LONG).show()
+            } else {
+                log("Failed to read file content from URI: $sharedStreamUri")
+                saveFile("failed_action_send.txt", "Failed to read file content from URI: $sharedStreamUri\nDebug log:\n$debugLog")
+                Toast.makeText(this, "Failed to read shared file", Toast.LENGTH_LONG).show()
+            }
         } else {
-            log("No text content in ACTION_SEND")
-            saveFile("failed_action_send.txt", "No text content received in ACTION_SEND\nDebug log:\n$debugLog")
+            log("No text content or file stream in ACTION_SEND")
+            saveFile("failed_action_send.txt", "No text content or file stream received in ACTION_SEND\nDebug log:\n$debugLog")
+            Toast.makeText(this, "No shareable content received", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun handleObsidianUrl() {
         log("Entering handleObsidianUrl")
         val data = intent?.data
-
         if (data != null) {
             log("Obsidian URL received: $data")
             log("Scheme: ${data.scheme}")
@@ -152,31 +150,20 @@ class MainActivity : AppCompatActivity() {
             log("Path: ${data.path}")
             log("Query: ${data.query}")
             log("Fragment: ${data.fragment}")
-
-            // Extract filename or note name
             val fileName = extractFileName(data.toString()) ?: "unknown_note"
-
-            // Placeholder content (since we can't access Obsidian note directly)
             val noteContent = """
 # Obsidian Note: $fileName
-
 This is a placeholder for the Obsidian note content.
 URL: $data
 Extracted filename: $fileName
-
 *Note*: Direct access to Obsidian note content is not supported.
 Please share the note text via ACTION_SEND if needed.
-
 *Processed at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}*
             """.trimIndent()
-
-            // Convert to HTML and PDF
             val html = convertMarkdownToHtml(noteContent)
             saveFile("obsidian_${fileName}.html", html)
             saveFile("obsidian_${fileName}.txt", noteContent)
             saveFileAsPdf("obsidian_${fileName}.pdf", html)
-
-            // Save URL debug info
             val urlInfo = """
 Obsidian URL Debug Info
 ======================
@@ -191,7 +178,6 @@ Debug log:
 $debugLog
             """.trimIndent()
             saveFile("obsidian_url_info.txt", urlInfo)
-
             Toast.makeText(this, "Processed Obsidian URL to HTML and PDF", Toast.LENGTH_LONG).show()
         } else {
             log("No URL data in ACTION_VIEW")
@@ -202,49 +188,35 @@ $debugLog
 
     private fun createTestFiles() {
         log("Creating test files...")
-
         val testMarkdown = """
 # Test D&D Adventure
-
 This is a **test file** created by the D&D PDF Handler app.
-
 ## Scene 1: The Tavern
-
 The party enters *The Prancing Pony*, a cozy tavern with:
 - Warm firelight
 - The smell of roasted meat
 - Suspicious looking patrons
-
 > A hooded figure in the corner beckons you over...
-
 ### Combat Encounter
 **Goblin Scout**
 - AC: 15
 - HP: 7
 - Speed: 30 ft
-
 **Actions:**
 - Scimitar: +4 to hit, 1d6+2 slashing damage
-
----
-
 *File created at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}*
         """.trimIndent()
-
         val html = convertMarkdownToHtml(testMarkdown)
         saveFile("test_adventure.md", testMarkdown)
         saveFile("test_adventure.html", html)
         saveFileAsPdf("test_adventure.pdf", html)
         saveFile("debug_log.txt", debugLog.toString())
-
         log("Test files created!")
         Toast.makeText(this, "Test files created - check Downloads", Toast.LENGTH_LONG).show()
     }
 
     private fun convertMarkdownToHtml(markdown: String): String {
         var html = markdown
-
-        // Basic markdown conversion
         html = html.replace(Regex("^# (.+)$", RegexOption.MULTILINE), "<h1>$1</h1>")
         html = html.replace(Regex("^## (.+)$", RegexOption.MULTILINE), "<h2>$1</h2>")
         html = html.replace(Regex("^### (.+)$", RegexOption.MULTILINE), "<h3>$1</h3>")
@@ -254,7 +226,6 @@ The party enters *The Prancing Pony*, a cozy tavern with:
         html = html.replace(Regex("^- (.+)$", RegexOption.MULTILINE), "<li>$1</li>")
         html = html.replace("\n\n", "</p><p>")
         html = html.replace("\n", "<br>")
-
         return """
 <!DOCTYPE html>
 <html>
@@ -264,12 +235,7 @@ The party enters *The Prancing Pony*, a cozy tavern with:
     <style>
         body { font-family: serif; line-height: 1.6; margin: 40px; }
         h1, h2, h3 { color: #8B0000; }
-        blockquote { 
-            border-left: 4px solid #8B0000; 
-            padding-left: 20px; 
-            margin: 20px 0;
-            font-style: italic;
-        }
+        blockquote { border-left: 4px solid #8B0000; padding-left: 20px; margin: 20px 0; font-style: italic; }
         li { margin: 5px 0; }
     </style>
 </head>
@@ -287,16 +253,11 @@ The party enters *The Prancing Pony*, a cozy tavern with:
             "vault=([^&]+).*?file=([^&]+)",
             "/([^/]+)$"
         )
-
         for (pattern in patterns) {
             val regex = pattern.toRegex()
             val matchResult = regex.find(obsidianUri)
             if (matchResult != null) {
-                val fileName = if (matchResult.groupValues.size > 2) {
-                    matchResult.groupValues[2]
-                } else {
-                    matchResult.groupValues[1]
-                }
+                val fileName = if (matchResult.groupValues.size > 2) matchResult.groupValues[2] else matchResult.groupValues[1]
                 log("Extracted filename: $fileName")
                 return fileName.replace("%20", " ").replace("%2F", "/")
             }
@@ -308,7 +269,6 @@ The party enters *The Prancing Pony*, a cozy tavern with:
     private fun saveFile(fileName: String, content: String): Boolean {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val fullFileName = "DnD_${fileName.substringBeforeLast(".")}_${timestamp}.${fileName.substringAfterLast(".")}"
-
         try {
             log("Attempting to save file: $fullFileName")
             val resolver = contentResolver
@@ -317,7 +277,6 @@ The party enters *The Prancing Pony*, a cozy tavern with:
                 put(MediaStore.MediaColumns.MIME_TYPE, getMimeType(fullFileName))
                 put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
             }
-
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
             if (uri != null) {
                 resolver.openOutputStream(uri)?.use { outputStream ->
@@ -340,7 +299,6 @@ The party enters *The Prancing Pony*, a cozy tavern with:
     private fun saveFileAsPdf(fileName: String, htmlContent: String): Boolean {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val fullFileName = "DnD_${fileName.substringBeforeLast(".")}_${timestamp}.pdf"
-
         try {
             log("Attempting to save PDF: $fullFileName")
             val resolver = contentResolver
@@ -349,7 +307,6 @@ The party enters *The Prancing Pony*, a cozy tavern with:
                 put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
                 put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
             }
-
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
             if (uri != null) {
                 resolver.openOutputStream(uri)?.use { outputStream ->
@@ -375,6 +332,20 @@ The party enters *The Prancing Pony*, a cozy tavern with:
             "md" -> "text/markdown"
             "pdf" -> "application/pdf"
             else -> "text/plain"
+        }
+    }
+
+    private fun readFileContent(uri: Uri): String? {
+        log("Attempting to read content from URI: $uri")
+        return try {
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                BufferedReader(InputStreamReader(inputStream)).use { reader ->
+                    reader.readText()
+                }
+            }
+        } catch (e: Exception) {
+            log("✗ Failed to read file content: ${e.message}")
+            null
         }
     }
 }
